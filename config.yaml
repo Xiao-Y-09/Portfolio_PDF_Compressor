@@ -6,8 +6,11 @@
 # 数值来源：《PDF压缩SaaS构建手册.md》附录 B 关键常量参考表。
 # ============================================================
 
+# 环境变量覆盖规则（pydantic-settings，嵌套定界符 "__"）：
+#   APP__APP_ENV / STORAGE__TMP_DIR / REDIS__HOST / AWS__S3_BUCKET ...
+
 app:
-  app_env: dev            # dev / prod（环境变量 APP_ENV 可覆盖）
+  app_env: dev            # dev / prod（环境变量 APP__APP_ENV 可覆盖）
   log_level: INFO
 
 storage:
@@ -15,10 +18,11 @@ storage:
   retention_seconds: 300  # 临时文件保留时间（秒），铁律 5：≤ 5 分钟
 
 redis:
-  host: localhost         # 环境变量 REDIS_HOST 可覆盖
+  host: localhost         # 环境变量 REDIS__HOST 可覆盖
   port: 6379
   db: 0
-  # password: 留空。如需密码，通过环境变量 REDIS_PASSWORD 注入，禁止写入本文件。
+  # 如需密码：在 settings.py 的 RedisConfig 增加 password 字段，
+  # 通过环境变量 REDIS__PASSWORD 注入，禁止写入本文件。
 
 compression:
   # ---- 三主控变量 ----
@@ -62,7 +66,7 @@ api:
 
 aws:
   # 可选：s3_bucket 留空则不启用 S3，使用本地存储。
-  s3_bucket: ""              # 环境变量 AWS_S3_BUCKET 注入
-  region: ""                 # 环境变量 AWS_REGION 注入
+  s3_bucket: ""              # 环境变量 AWS__S3_BUCKET 注入
+  region: ""                 # 环境变量 AWS__REGION 注入
   # 密钥永不写入本文件：
   #   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 仅通过环境变量或 IAM Role 注入。
