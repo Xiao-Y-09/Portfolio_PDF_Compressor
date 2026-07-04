@@ -47,7 +47,8 @@ SAMPLES: list[BaseModel] = [
     BBOX,
     RasterImage(
         data_ref="images/img_001_000.bin", width=3000, height=2000, dpi=300.0,
-        color_space="RGB", has_alpha=False, original_bytes=5_000_000, bbox=BBOX,
+        color_space="RGB", has_alpha=False, alpha_type="none",
+        original_bytes=5_000_000, bbox=BBOX,
     ),
     VectorPath(
         path_data_ref="vectors/vec_001_000.bin", control_point_count=12000,
@@ -275,7 +276,7 @@ def test_phase_outputs_compose_without_conversion():
     """
     img = RasterImage(data_ref="images/img_001_000.bin", width=3000, height=2000,
                       dpi=300.0, color_space="RGB", has_alpha=True,
-                      original_bytes=1_000_000, bbox=BBOX)
+                      alpha_type="translucent", original_bytes=1_000_000, bbox=BBOX)
     page = PageElements(page_number=1, page_width=595.0, page_height=842.0,
                         raster_images=[img])
     plan = CompressionPlan(
