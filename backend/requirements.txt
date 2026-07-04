@@ -1,0 +1,19 @@
+# PDF 压缩 SaaS 后端依赖（Python 3.11+）
+# 依赖清单严格对应《PDF压缩SaaS构建手册.md》Phase 0 列出的范围。
+# 手册后续 Phase 明确列出的依赖（如 Phase 7 的 fonttools）在对应 Phase 加入。
+
+fastapi
+uvicorn[standard]
+pydantic>=2
+pydantic-settings
+pymupdf
+pillow
+celery
+redis
+boto3
+python-multipart
+pyyaml  # config.yaml 加载（代码直接 import yaml，必须显式声明，不依赖传递依赖）
+
+# 测试
+pytest
+httpx

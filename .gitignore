@@ -1,0 +1,31 @@
+# ---- 手册 Phase 0 要求的必备条目 ----
+config.local.yaml
+*.pdf
+tmp/
+node_modules/
+__pycache__/
+
+# ---- Python ----
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+htmlcov/
+.coverage
+
+# ---- Node / Next.js ----
+.next/
+out/
+
+# ---- 环境与密钥（附录 A 安全检查要求）----
+.env
+.env.*
+deploy/.env
+deploy/ec2/certs/
+
+# ---- IDE / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

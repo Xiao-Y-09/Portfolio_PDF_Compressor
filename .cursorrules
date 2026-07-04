@@ -1,0 +1,45 @@
+# .cursorrules — PDF 压缩 SaaS 项目约束（与 CLAUDE.md 同步维护）
+
+## 唯一功能真源
+功能只依据 docs/ 下三份文档实现，文档未定义的功能不进入实现：
+1. docs/系统架构设计.md
+2. docs/压缩决策引擎.md
+3. docs/数据契约.md
+（Phase 1 完成前，以《PDF压缩SaaS构建手册.md》与《PhaseD_压缩参数决策引擎.md》为唯一真源。）
+
+## 七条铁律（违反任何一条立即停止）
+1. 决策与执行分离：Phase D（decide.py）不做压缩，Phase E（compress.py）不做决策。
+2. Phase D 纯函数：decide.py 内禁止文件 I/O、网络调用、图像处理库（PIL/OpenCV/fitz），只做数学运算和 config 读取；相同输入必须产出相同输出。
+3. 只降不升：不升采样、不升质量、不升 DPI。
+4. 面积感知：压缩力度必须考虑 area_ratio = element_bbox_area / page_area。
+5. 临时文件强制清理：上传的 PDF 处理完成后（无论成败）5 分钟内删除，永不持久化。
+6. 输入输出契约不可下游修改：contracts/ 中的类型只能消费不能修改；需调整必须回到契约层。
+7. 收敛失败不静默输出：5 轮未达标必须返回明确错误，不允许输出超标 15% 以上的文件。
+
+## 代码目录职责
+- backend/app/main.py：FastAPI 入口
+- backend/app/config/：配置加载（pydantic-settings + YAML）
+- backend/app/api/：REST 路由 handler
+- backend/app/contracts/：所有 Phase 间的数据类型定义（Pydantic 模型，禁止裸 dict）
+- backend/app/storage/：文件存储抽象（本地 + S3 可选）
+- backend/app/pipeline/split.py：Phase 4 拆页
+- backend/app/pipeline/extract.py：Phase 5 元素提取
+- backend/app/pipeline/classify.py：Phase 6 页面分类
+- backend/app/pipeline/preprocess.py：Phase 7 字体子集化 + 固定开销
+- backend/app/pipeline/decide.py：Phase 8 压缩决策（纯函数）
+- backend/app/pipeline/compress.py：Phase 9 压缩执行（唯一允许 PIL 的地方）
+- backend/app/pipeline/assemble.py：Phase 10 PDF 重组
+- backend/app/pipeline/orchestrator.py：Phase 11 流水线编排 + 收敛循环
+- backend/app/queue/：任务队列（Celery）
+- frontend/：Next.js 前端
+
+## 验证命令
+- cd backend && pytest tests/ -v
+- cd backend && python -m app.main --check
+- 铁律 grep 检查（decide.py 内无 open(/Path(/PIL/cv2/fitz/requests/httpx/urllib；契约 class 只定义在 contracts/；pipeline/ 无硬编码 quality/dpi）
+
+## 工作方式
+- 严格按 Phase 顺序执行；所有可调参数从 config.yaml 读取，不写魔法数字。
+- 显式声明直接依赖：任何被代码直接 import 的包必须在 requirements.txt / package.json 中显式声明，不允许依赖传递依赖。
+- 新依赖、契约变更、修改已完成 Phase：先问用户，不自作主张。
+- 测试样本必须是用户提供的真实作品集 PDF。

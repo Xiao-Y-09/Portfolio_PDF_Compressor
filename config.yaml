@@ -1,0 +1,68 @@
+# config.yaml — PDF 压缩 SaaS 配置模板
+# ============================================================
+# 安全约定：
+#   - 本文件不含任何密钥。所有敏感字段留空，仅通过环境变量注入。
+#   - 本地覆盖使用 config.local.yaml（已在 .gitignore 中，永不提交）。
+# 数值来源：《PDF压缩SaaS构建手册.md》附录 B 关键常量参考表。
+# ============================================================
+
+app:
+  app_env: dev            # dev / prod（环境变量 APP_ENV 可覆盖）
+  log_level: INFO
+
+storage:
+  tmp_dir: ./tmp          # 临时工作区（处理完成后强制清理，铁律 5）
+  retention_seconds: 300  # 临时文件保留时间（秒），铁律 5：≤ 5 分钟
+
+redis:
+  host: localhost         # 环境变量 REDIS_HOST 可覆盖
+  port: 6379
+  db: 0
+  # password: 留空。如需密码，通过环境变量 REDIS_PASSWORD 注入，禁止写入本文件。
+
+compression:
+  # ---- 三主控变量 ----
+  aggressiveness: 0.5        # 默认压缩激进度（0.0 最保守 ~ 1.0 最激进）
+  area_sensitivity: 0.6      # 小图 vs 大图差别待遇
+  pixel_ceiling_ratio: 1.2   # 像素天花板安全余量
+
+  # ---- 压缩场景预设 → aggressiveness 映射 ----
+  presets:
+    print:
+      aggressiveness: 0.2
+    screen:
+      aggressiveness: 0.5
+    email:
+      aggressiveness: 0.8
+
+  # ---- 位图参数边界 ----
+  quality_floor: 30          # JPEG 质量绝对下限
+  quality_ceiling: 95        # JPEG 质量绝对上限（100=无损，浪费）
+  dpi_floor: 72              # DPI 绝对下限
+  dpi_ceiling: 300           # DPI 绝对上限
+
+  # ---- 矢量策略阈值 ----
+  vector_ignore_area_ratio: 0.1     # area_ratio 低于此值无条件 keep
+  vector_simplify_threshold: 10000  # 控制点 ≥ 此值考虑 simplify
+  vector_rasterize_threshold: 100000 # 控制点 ≥ 此值考虑 rasterize
+
+  # ---- 收敛循环 ----
+  max_convergence_rounds: 5         # binary search 最大轮数（铁律 7）
+  convergence_tolerance: 0.15       # 达标容忍度（±15%）
+  aggressiveness_step_large: 0.15   # 超标 >30% 时的单轮调整量
+  aggressiveness_step_small: 0.08   # 超标 <30% 时的单轮调整量
+
+session:
+  review_session_ttl: 1800   # 用户 review 会话超时（秒）
+
+api:
+  max_upload_mb: 500         # 上传大小上限
+  cors_origins:
+    - http://localhost:3000  # prod 部署时替换为前端域名
+
+aws:
+  # 可选：s3_bucket 留空则不启用 S3，使用本地存储。
+  s3_bucket: ""              # 环境变量 AWS_S3_BUCKET 注入
+  region: ""                 # 环境变量 AWS_REGION 注入
+  # 密钥永不写入本文件：
+  #   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 仅通过环境变量或 IAM Role 注入。
