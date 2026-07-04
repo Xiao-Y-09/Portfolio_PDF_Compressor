@@ -56,6 +56,18 @@ compression:
   aggressiveness_step_large: 0.15   # 超标 >30% 时的单轮调整量
   aggressiveness_step_small: 0.08   # 超标 <30% 时的单轮调整量
 
+classifier:
+  # Phase 6 启发式分类阈值（迁入 config 决策：2026-07-04 用户批准）
+  photo_area_threshold: 0.5          # raster 面积占比 > 此值 → photo_heavy 候选
+  photo_min_dpi: 100                 # 且至少一张位图 dpi > 此值
+  chart_vector_area_threshold: 0.3   # vector 面积占比 > 此值 → chart 候选
+  chart_complexity_threshold: 5000   # 且控制点总数 > 此值
+  chart_max_raster_ratio: 0.3        # 且 raster 占比 < 此值
+  text_block_count_threshold: 15     # 文字块数 > 此值 → text_heavy 候选
+  text_max_raster_ratio: 0.15        # 且 raster 占比 < 此值
+  text_max_vector_complexity: 2000   # 且控制点总数 < 此值
+  complexity_score_slope: 10.0       # 边界模糊度斜率：score = 1 - 距阈值距离 × slope
+
 session:
   review_session_ttl: 1800   # 用户 review 会话超时（秒）
 

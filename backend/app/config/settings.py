@@ -88,6 +88,20 @@ class CompressionConfig(BaseModel):
     aggressiveness_step_small: float = Field(default=0.08, gt=0.0)
 
 
+class ClassifierConfig(BaseModel):
+    """Phase 6 启发式分类阈值（迁入 config：2026-07-04 用户批准）。"""
+
+    photo_area_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    photo_min_dpi: int = Field(default=100, gt=0)
+    chart_vector_area_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
+    chart_complexity_threshold: int = Field(default=5000, gt=0)
+    chart_max_raster_ratio: float = Field(default=0.3, ge=0.0, le=1.0)
+    text_block_count_threshold: int = Field(default=15, gt=0)
+    text_max_raster_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
+    text_max_vector_complexity: int = Field(default=2000, gt=0)
+    complexity_score_slope: float = Field(default=10.0, gt=0.0)
+
+
 class SessionConfig(BaseModel):
     review_session_ttl: int = 1800
 
@@ -114,6 +128,7 @@ class Settings(BaseSettings):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     compression: CompressionConfig = Field(default_factory=CompressionConfig)
+    classifier: ClassifierConfig = Field(default_factory=ClassifierConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
     aws: AwsConfig = Field(default_factory=AwsConfig)
