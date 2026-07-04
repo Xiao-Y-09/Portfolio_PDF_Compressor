@@ -53,6 +53,20 @@ def test_split_five_pages_returns_five_rawpages(tmp_path, ctx):
         assert "\\" not in p.page_bytes_ref
 
 
+def test_source_copy_saved_to_workspace(tmp_path, ctx):
+    """架构决策 A（2026-07-04）：split 必须保留完整原件副本供原地手术使用。"""
+    pdf = make_pdf(tmp_path / "src.pdf", pages=2)
+    split_pdf(str(pdf), ctx)
+    source = ctx.resolve_ref("source.pdf")
+    assert source.is_file()
+    assert source.stat().st_size == pdf.stat().st_size  # 逐字节副本
+    doc = pymupdf.open(str(source))
+    try:
+        assert doc.page_count == 2
+    finally:
+        doc.close()
+
+
 def test_page_refs_exist_and_are_reopenable(tmp_path, ctx):
     pdf = make_pdf(tmp_path / "three.pdf", pages=3)
     pages = split_pdf(str(pdf), ctx)

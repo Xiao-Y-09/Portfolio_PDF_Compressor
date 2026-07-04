@@ -120,10 +120,30 @@ def _subset_font(font: FontUsage, ctx: PipelineContext) -> Optional[SubsetResult
                     font.font_name)
         return None
 
+    # 可疑字符集门禁（2026-07-04，原地手术 QC 发现）：无 ToUnicode 的字体提取出的
+    # chars_used 是私有区/乱码码点，按它子集化会保留错误的 cmap 条目——原地替换
+    # 字体流后文字层被污染（简单 TrueType 还有视觉风险）。此类字体放弃子集化，
+    # 保留原字体（体积损失几百 KB 级，正确性优先）。
+    if any(0xE000 <= ord(c) <= 0xF8FF or ord(c) < 0x20 for c in font.chars_used):
+        logger.warning(
+            "font %s: charset contains PUA/control codepoints (likely no ToUnicode), "
+            "skipping subsetting to protect text integrity", font.font_name)
+        return SubsetResult(
+            font_name=font.font_name,
+            original_bytes=original_bytes,
+            subsetted_bytes=original_bytes,
+            subsetted_data_ref=font.data_ref,
+        )
+
     try:
         tt = TTFont(str(src))
         options = subset.Options()
         options.notdef_outline = True  # 保留 .notdef 轮廓，缺字时不至于渲染空白
+        # 原地手术主干（2026-07-04 架构决策 A）必需：保持字形 ID 不变。
+        # 子集化产物将原地替换 PDF 里的 FontFile2 流，PDF 文本以 GID 寻址字形
+        # （CID 字体 CIDToGIDMap），GID 重排会导致视觉乱码；retain_gids 只清空
+        # 未用字形的轮廓、不重新编号，体积收益仍在（轮廓是大头）。
+        options.retain_gids = True
         subsetter = subset.Subsetter(options)
         subsetter.populate(text="".join(sorted(font.chars_used)))
         subsetter.subset(tt)

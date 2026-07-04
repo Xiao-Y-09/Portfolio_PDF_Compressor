@@ -21,6 +21,8 @@ List[VectorPath]，未来做空间聚类分组无需改契约。
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import pickle
 import re
@@ -211,6 +213,31 @@ def _classify_alpha(doc, smask_xref: int) -> str:
         return "translucent"
 
 
+def _merge_smask(doc, xref: int, smask_xref: int):
+    """把 SMask 合并进基底图的 alpha 通道，返回 (png_bytes, width, height)。
+
+    失败返回 None（调用方保留基底图并记 warning）。CMYK 等非 RGB 基底先转 RGB
+    （PNG 不支持 CMYK；Pixmap(base, mask) 要求无 alpha 的基底 + 同尺寸灰度掩膜）。
+    """
+    try:
+        base = pymupdf.Pixmap(doc, xref)
+        if base.alpha:  # 基底自带 alpha 的极少数情况：直接导出
+            data = base.tobytes("png")
+            return data, base.width, base.height
+        if base.colorspace is None or base.colorspace.n > 3:
+            base = pymupdf.Pixmap(pymupdf.csRGB, base)
+        mask = pymupdf.Pixmap(doc, smask_xref)
+        if (mask.width, mask.height) != (base.width, base.height):
+            mask = pymupdf.Pixmap(mask, base.width, base.height, None)  # 缩放到同尺寸
+        merged = pymupdf.Pixmap(base, mask)
+        data = merged.tobytes("png")
+        return data, merged.width, merged.height
+    except Exception:
+        logger.warning("smask merge failed (xref %d, smask %d)", xref, smask_xref,
+                       exc_info=True)
+        return None
+
+
 def _extract_rasters(doc, page, page_number: int, ctx: PipelineContext) -> List[RasterImage]:
     """提取本页位图。
 
@@ -221,6 +248,8 @@ def _extract_rasters(doc, page, page_number: int, ctx: PipelineContext) -> List[
     """
     rasters: List[RasterImage] = []
     file_index = 0  # 每页唯一图像文件计数（非摆放计数）
+    seen_digests: Dict[bytes, str] = {}  # digest → data_ref（同内容不同 xref 去重）
+    xref_map = _load_xref_map(ctx)  # sidecar：data_ref → 源 xref（原地替换定位用）
     for item in page.get_images(full=True):  # full=True 覆盖嵌套在 Form XObject 里的图
         xref, smask = item[0], item[1]
         try:
@@ -236,16 +265,43 @@ def _extract_rasters(doc, page, page_number: int, ctx: PipelineContext) -> List[
                            exc_info=True)
             continue
         img_bytes: bytes = info["image"]
+        # 修复 2026-07-04（Phase 10 测试发现）：pymupdf get_image_rects 按内容摘要
+        # 匹配摆放——同内容的 N 个 xref 各自返回全部 M 个矩形，导致 N×M 条目膨胀。
+        # 按字节摘要去重：同内容只处理一次（其 rects 已含全部摆放）。
+        digest = hashlib.md5(img_bytes).digest()
+        if digest in seen_digests:
+            # 同内容的额外 xref：不重复建条目，但记入 sidecar 供原地替换逐个处理
+            dup_ref = seen_digests[digest]
+            if xref not in xref_map[dup_ref]["xrefs"]:
+                xref_map[dup_ref]["xrefs"].append(xref)
+            continue
         width, height = int(info["width"]), int(info["height"])
         if width <= 0 or height <= 0 or not img_bytes:
             continue
         color_space = str(info.get("cs-name") or info.get("colorspace") or "unknown")
         alpha_type = _classify_alpha(doc, smask) if smask else "none"
 
+        # 修复 2026-07-04（目视验收问题一/二/五根因）：extract_image 返回的是
+        # 不含透明的基底图，而阴影/压暗层的基底常是纯黑像素 + SMask。若原样保存，
+        # 重组时半透明黑纱会变成实心黑板（白底变黑/整页全黑/盖掉矢量）。
+        # 真透明图必须把 SMask 合并进 alpha 通道后以 PNG 保存。
+        if alpha_type == "translucent":
+            merged = _merge_smask(doc, xref, smask)
+            if merged is not None:
+                img_bytes, width, height = merged
+            else:
+                logger.warning(
+                    "page %d xref %d: SMask merge failed, keeping base image",
+                    page_number, xref,
+                )
+
         # 每个 xref 每页只落盘一次；所有摆放共享同一 data_ref
         ref = f"{IMAGES_DIR}/img_{page_number:03d}_{file_index:03d}.bin"
         ctx.resolve_ref(ref).write_bytes(img_bytes)
         file_index += 1
+        seen_digests[digest] = ref
+        # sidecar 登记源 xref（原地手术主干的替换定位键，2026-07-04 架构决策 A）
+        xref_map[ref] = {"page": page_number, "xrefs": [xref], "smask": smask}
 
         for rect in rects:  # 同一 xref 多处摆放 → 每处一个元素（bbox/dpi 不同）
             if rect.width <= 0 or rect.height <= 0:
@@ -261,7 +317,26 @@ def _extract_rasters(doc, page, page_number: int, ctx: PipelineContext) -> List[
                 original_bytes=len(img_bytes),  # ← Producer 落地（修订 2026-07-04）
                 bbox=_rect_to_bbox((rect.x0, rect.y0, rect.x1, rect.y1)),
             ))
+    _save_xref_map(ctx, xref_map)
     return rasters
+
+
+XREF_MAP_REF = f"{IMAGES_DIR}/xref_map.json"
+
+
+def _load_xref_map(ctx: PipelineContext) -> dict:
+    """sidecar：data_ref → {page, xrefs[], smask}。工作区内部工件（非契约），
+    与 pickle 文件同性质；Producer=extract，Consumer=assemble（原地替换定位）。"""
+    path = ctx.resolve_ref(XREF_MAP_REF)
+    if path.is_file():
+        return json.loads(path.read_text(encoding="utf-8"))
+    return {}
+
+
+def _save_xref_map(ctx: PipelineContext, xref_map: dict) -> None:
+    ctx.resolve_ref(XREF_MAP_REF).write_text(
+        json.dumps(xref_map, ensure_ascii=False), encoding="utf-8"
+    )
 
 
 def _drawing_to_primitives(d: dict) -> dict:

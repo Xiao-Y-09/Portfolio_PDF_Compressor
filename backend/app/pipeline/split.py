@@ -63,6 +63,11 @@ def split_pdf(input_pdf_path: str, ctx: PipelineContext) -> list[RawPage]:
         pages_root = ctx.resolve_ref(PAGES_DIR)
         pages_root.mkdir(parents=True, exist_ok=True)
 
+        # 原地手术主干（2026-07-04 架构决策 A）：保留完整原件副本，
+        # Phase 10 以它为基底做图像/字体流替换，文字矢量零改动
+        import shutil as _shutil
+        _shutil.copyfile(input_pdf_path, ctx.resolve_ref("source.pdf"))
+
         raw_pages: list[RawPage] = []
         for index in range(doc.page_count):
             page_number = index + 1

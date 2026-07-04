@@ -98,4 +98,33 @@
 - ⚠ R7 新前瞻风险：§5.5 估算系统性偏低（actual vs est：+26%/+68%/+181%），
   主因 png_bytes_per_pixel=0.35 对照片类 RGBA 过于乐观（实际 1-3 B/px）；
   收敛环可吸收但烧轮数；建议 Phase 13 每格式标定（或提前调 config 默认值，待用户裁决）
-- 验收通过后：squash 为 "Phase 9: compression executor (single-round)" + push
+- Phase 9 正式 commit：`b4149ac`（已 push）
+
+## 8a. Phase 10 二轮：架构决策 A —— 原地手术主干（2026-07-04 用户裁决，等待二次目视）
+
+一轮目视 5 项问题 → 4 项修复（SMask 合并/白底/回退/glyph 检查）+ 1 项架构级发现：
+**无 ToUnicode 字体文字层不可恢复** → 主干切换为原地手术（assemble.py 重写，
+重建路线保留于 assemble_rebuild.py 供未来双轨选项 C）。
+
+- 机制：split 存 source.pdf 副本；extract 写 sidecar images/xref_map.json
+  （data_ref→源 xref，同内容多 xref 列表）；assemble 按 xref 定位 replace_image；
+  字体子集 retain_gids=True + PUA/控制符门禁（可疑字符集放弃子集化保文字完整）
+- QC 实证：95 页 0 黑页；文字空白归一化后 3 样本逐字相同；CAD 页渲染像素差
+  0.29-1.04/255（clean=True 重排视觉等价，drawings 计数差异为良性规范化）
+- @10MB 单轮大小：p1 13.53 / p2 32.42 / p3 7.09 MB（p2 超标：矢量原封不动 + R7
+  估算偏差；收敛环 Phase 11 处理，未来增强：原地整页光栅化极端矢量页）
+- 测试 148 passed + 1 skipped（原地语义 11 用例 + rebuild 保留 3 用例）
+
+## 8b. Phase 10 一轮记录（重建路线，已退役）：assemble_rebuild.py（WIP `38a496e` → `3471d0b` + 标定）
+
+- assemble.py：xref 共享插入（§3.1.1 兑现）/ 矢量重绘（keep/simplify pickle、rasterize PNG）/
+  文字+子集化字体（回退链 别名→china-s→跳过）/ 链接+书签+清理元数据 / 手册保存参数
+- 修复（Phase 10 测试发现）：extract 按内容摘要去重——pymupdf get_image_rects 按摘要
+  匹配摆放，同内容 N 个 xref 会 N×M 膨胀条目；早前"12573 摆放"系此 bug 虚增，
+  真实值 749 摆放 / 502 唯一流
+- R2 已闭环：vector_bytes_per_control_point 实测标定 3.0 → 4.5（p2 内容流 3.76MB/839k cp；
+  用户预授权 >30% 即更新）；标定后 p2 仍 10/15/20 可行、5MB 拒绝
+- 测试：assemble 5 用例（页数守恒/尺寸/单次嵌入/链接书签元数据/输出变小）；全量 138+1s
+- 目视验收物：preview_output/portfolio_{1,2,3}_10mb.pdf（5.87 / 15.66 / 5.92 MB，单轮无收敛）
+- V1 保真近似（目视预期）：层序固定 位图→矢量→文字；文字统一黑色+基线近似；
+  书签压平一级；rasterize 区域含层叠内容；form_field/comment 不重建
