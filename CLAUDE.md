@@ -86,6 +86,11 @@ grep -rE "quality\s*=\s*[0-9]+|dpi\s*=\s*[0-9]+" backend/app/pipeline/ | grep -v
 - 严格按 Phase 顺序执行（Phase 0 → 15），当前 Phase 未通过验证不得开始下一个。
 - **显式声明直接依赖**：任何被我们代码直接 import 的包，必须在 `backend/requirements.txt` / `frontend/package.json` 中显式声明，不允许依赖传递依赖（transitive dependency）。
 - **接口 look-ahead**：定义抽象接口/基类/契约类型时，实现方必须预先扫描本项目手册中后续 Phase 的调用点，把所有会被调用的方法/字段一次性纳入。禁止后期 Phase 追加接口方法或契约字段——如需追加，必须回到接口定义 Phase 显式修订，不允许静默扩展。
+- **Producer-Consumer 审计**：每个 Phase 完成后，对本 Phase 新增/修改的所有字段执行 Producer-Consumer 审计：
+  1. 每个字段找出其所有 Producer 位置和 Consumer 位置
+  2. 验证每个 Consumer 需求都能被 Producer 满足（时机、精度、单位）
+  3. 报告中列出：孤儿字段（无 Consumer，可考虑删除）、凭空字段（无 Producer，必须补 Producer）
+  4. 任何无法在本 Phase 解决的 DAG 断链，停下报告，不擅自修改契约。
 - 所有可调参数从 `config.yaml`（`settings.compression`）读取，代码中不出现魔法数字。
 - 引入手册未列出的新依赖、修改已完成 Phase、契约不够用时：**停下来问用户**，不自作主张。
 - 测试用样本 PDF 必须由用户提供真实作品集，不得用生成的假 PDF 蒙混。
