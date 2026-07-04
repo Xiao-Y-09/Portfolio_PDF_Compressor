@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pymupdf
 
+from app.config.settings import get_settings
 from app.contracts import (
     Annotation,
     BBox,
@@ -314,12 +315,18 @@ def _extract_vectors(page, page_number: int, ctx: PipelineContext) -> List[Vecto
 
     stroke = next((_color_to_hex(p["color"]) for p in primitives if p["color"]), None)
     fill = next((_color_to_hex(p["fill"]) for p in primitives if p["fill"]), None)
+    # 语义修订 2026-07-04：original_bytes = 内容流预估输出成本（cp × config 系数），
+    # 不是 pickle 大小（pickle ~31.6 B/cp 是内存序列化成本，作预算会膨胀 10 倍）。
+    # pickle 文件照旧存盘，仅供 Phase 10 重绘。
+    estimated_stream_bytes = int(
+        control_points * get_settings().compression.vector_bytes_per_control_point
+    )
     return [VectorPath(
         path_data_ref=ref,
         control_point_count=control_points,
         stroke_color=stroke,
         fill_color=fill,
-        original_bytes=len(payload),  # ← Producer 落地（修订 2026-07-04）
+        original_bytes=estimated_stream_bytes,
         bbox=_rect_to_bbox((min(xs0), min(ys0), max(xs1), max(ys1))),
     )]
 

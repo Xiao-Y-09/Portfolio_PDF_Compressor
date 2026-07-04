@@ -81,6 +81,8 @@ class CompressionConfig(BaseModel):
     vector_ignore_area_ratio: float = Field(default=0.1, ge=0.0, le=1.0)
     vector_simplify_threshold: int = Field(default=10_000, gt=0)
     vector_rasterize_threshold: int = Field(default=100_000, gt=0)
+    # 矢量输出成本估算系数（B/控制点；语义修订 2026-07-04，Phase 10 后校准）
+    vector_bytes_per_control_point: float = Field(default=3.0, ge=1.0, le=10.0)
     # 收敛循环
     max_convergence_rounds: int = Field(default=5, gt=0)
     convergence_tolerance: float = Field(default=0.15, gt=0.0)

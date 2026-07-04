@@ -49,6 +49,8 @@ compression:
   vector_ignore_area_ratio: 0.1     # area_ratio 低于此值无条件 keep
   vector_simplify_threshold: 10000  # 控制点 ≥ 此值考虑 simplify
   vector_rasterize_threshold: 100000 # 控制点 ≥ 此值考虑 rasterize
+  vector_bytes_per_control_point: 3.0 # 矢量输出成本估算系数（B/控制点，内容流+deflate 约值；
+                                      # 语义修订 2026-07-04，Phase 10 首次产出真实 PDF 后校准）
 
   # ---- 收敛循环 ----
   max_convergence_rounds: 5         # binary search 最大轮数（铁律 7）

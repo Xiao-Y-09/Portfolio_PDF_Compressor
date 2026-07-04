@@ -80,9 +80,14 @@ def test_all_data_refs_exist_and_readable(extracted):
 
 
 def test_original_bytes_producer_landed(extracted):
-    """修订 2026-07-04 的 Producer 首次落地验证（关注点 1）：
-    original_bytes == 实际写入文件的字节数，且 > 0。"""
-    checked_raster = checked_vector = 0
+    """修订 2026-07-04 的 Producer 落地验证（关注点 1）：
+    - 位图：original_bytes == 实际写入文件的字节数
+    - 矢量：original_bytes == cp × vector_bytes_per_control_point（内容流预估，
+      语义修订后不再等于 pickle 大小）"""
+    from app.config.settings import get_settings
+
+    factor = get_settings().compression.vector_bytes_per_control_point
+    checked_raster = 0
     for name, r in extracted.items():
         ctx = r["ctx"]
         for p in r["pages"]:
@@ -91,11 +96,10 @@ def test_original_bytes_producer_landed(extracted):
                 assert img.original_bytes > 0
                 checked_raster += 1
             for vec in p.vector_paths:
-                assert vec.original_bytes == ctx.resolve_ref(vec.path_data_ref).stat().st_size
-                assert vec.original_bytes > 0
-                checked_vector += 1
+                assert vec.original_bytes == int(vec.control_point_count * factor)
+                # pickle 文件仍然存在（Phase 10 重绘用），但不作为度量
+                assert ctx.resolve_ref(vec.path_data_ref).stat().st_size > 0
     assert checked_raster > 0, "三份样本竟无一张位图，请检查样本"
-    # 矢量不强制存在（取决于样本内容），但存在即必须已验证
 
 
 def test_raster_fields_sane(extracted):

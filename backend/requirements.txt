@@ -13,6 +13,7 @@ redis
 boto3
 python-multipart
 pyyaml  # config.yaml 加载（代码直接 import yaml，必须显式声明，不依赖传递依赖）
+fonttools  # Phase 7 字体子集化（手册 Phase 7 Prompt 列出的依赖）
 
 # 测试
 pytest
