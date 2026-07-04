@@ -85,5 +85,17 @@
   变为 10/15/20MB 可行、5MB 如实拒绝；guard_hits=3、正当 rasterize 保留 3
 - 已知边界观察：p2@10MB 估算 2.96MB 略超 cap 2.93MB（PNG 不吃 quality、DPI 触底
   72）——下限约束下的最优，交收敛环兜底；rasterize DPI 降档备选推迟到 Phase 9 实测后
-- 下一步：Phase 9（compress.py 单轮执行 + decide↔compress 双轮握手集成测试 +
-  三样本真实单轮压缩计时/压缩率——首次校验 §5.5 估算公式）
+- Phase 8 正式 commit：`8ae760c`（已 push）
+
+## 7. Phase 9 状态：compress.py 完成，等待验收（WIP `d7b047b` → `4d0ba7a`）
+
+- compress.py：唯一图像库入口；按 data_ref 去重压缩（最保守参数：max quality/max
+  dimension）；只降不升回退；成功率 <80% 熔断；矢量执行（simplify=自实现 DP，
+  rasterize=split 单页 PDF клип渲染）；execute_compression 增加 config 参数（披露项）
+- 测试 9 个（去重/保守参数/回退/容错/熔断/skip/DP/渲染/双轮握手）；全量 133+1s
+- 真实单轮 @10MB：去重 12573 摆放 → 749 次实际压缩；压缩耗时 3-14s/份；
+  raster 60.5→5.2 / 75.9→8.3 / 33.3→5.3 MB
+- ⚠ R7 新前瞻风险：§5.5 估算系统性偏低（actual vs est：+26%/+68%/+181%），
+  主因 png_bytes_per_pixel=0.35 对照片类 RGBA 过于乐观（实际 1-3 B/px）；
+  收敛环可吸收但烧轮数；建议 Phase 13 每格式标定（或提前调 config 默认值，待用户裁决）
+- 验收通过后：squash 为 "Phase 9: compression executor (single-round)" + push
