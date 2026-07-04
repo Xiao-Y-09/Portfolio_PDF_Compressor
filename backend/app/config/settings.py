@@ -88,6 +88,21 @@ class CompressionConfig(BaseModel):
     convergence_tolerance: float = Field(default=0.15, gt=0.0)
     aggressiveness_step_large: float = Field(default=0.15, gt=0.0)
     aggressiveness_step_small: float = Field(default=0.08, gt=0.0)
+    gap_large_threshold: float = Field(default=0.3, gt=0.0)
+    # Phase 8 派生行为常量（2026-07-04 迁入 config，《压缩决策引擎.md》第 9 章）
+    area_tier_large: float = Field(default=0.6, ge=0.0, le=1.0)
+    simplify_tolerance_conservative: float = Field(default=0.5, gt=0.0)
+    simplify_tolerance_aggressive: float = Field(default=1.0, gt=0.0)
+    rasterize_dpi_large: int = Field(default=200, gt=0)
+    rasterize_dpi_medium: int = Field(default=150, gt=0)
+    rasterize_dpi_small: int = Field(default=96, gt=0)
+    vector_rasterize_min_area_ratio: float = Field(default=0.3, ge=0.0, le=1.0)
+    rasterize_estimate_quality: int = Field(default=80, ge=0, le=100)
+    jpeg_bpp_base: float = Field(default=0.04, gt=0.0)
+    jpeg_bpp_quality_coeff: float = Field(default=0.12, ge=0.0)
+    png_bytes_per_pixel: float = Field(default=0.35, gt=0.0)
+    simplify_size_factor: float = Field(default=0.5, gt=0.0, le=1.0)
+    budget_overshoot_tolerance: float = Field(default=1.1, ge=1.0)
 
 
 class ClassifierConfig(BaseModel):
