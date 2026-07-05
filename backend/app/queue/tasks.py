@@ -70,11 +70,12 @@ def compress_pdf_task(self, file_id: str, user_prefs_dict: dict) -> dict:
             "classified": [c.model_dump() for c in classified],
             "session_id": task_id,
         }
-    except PhaseError as e:
-        cleanup_workspace(str(workspace))
-        self.update_state(state="FAILURE", meta={"error": e.model_dump()})
-        raise
     except Exception:
+        # 失败即清理（铁律 5）。不再手动 update_state(FAILURE)：JSON 结果后端的
+        # FAILURE 结果必须是 Celery 自己序列化的异常（exc_type/exc_message），
+        # 裸 dict 形状会让 AsyncResult 读回直接崩（Phase 12 实测修订，披露性
+        # 偏离手册伪码——PhaseError.args 已按构造签名对齐，raise 后 API 层可
+        # 无损重建，含 diagnostics）
         cleanup_workspace(str(workspace))
         raise
 
@@ -113,9 +114,8 @@ def resume_compression_task(
             "tier_used": tier_used,
             "warning": TIER_WARNINGS.get(tier_used),  # in_place → None
         }
-    except PhaseError as e:
-        self.update_state(state="FAILURE", meta={"error": e.model_dump()})
-        raise
     finally:
+        # 无论成败：清理工作区 + 删除 Redis session（铁律 5）。失败路径同上，
+        # 直接 raise 交 Celery 序列化，不手动 update_state(FAILURE)
         cleanup_workspace(workspace)
         _redis().delete(_session_key(session_id))

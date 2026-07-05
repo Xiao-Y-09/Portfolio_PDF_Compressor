@@ -104,13 +104,24 @@ class PhaseError(Exception):
         code: str,
         message: str,
         recoverable: bool = False,
-        diagnostics: Optional[ConvergenceDiagnostics] = None,
+        diagnostics=None,  # ConvergenceDiagnostics | dict | None（dict 供 Celery 重建）
     ):
         self.data = PhaseErrorData(
             phase=phase, code=code, message=message, recoverable=recoverable,
             diagnostics=diagnostics,
         )
         super().__init__(f"[{phase}:{code}] {message}")
+        # Celery JSON 结果后端重建约定（Phase 12 修订，2026-07-05）：FAILURE 结果
+        # 以 exc_type + exc_message(=args) 存储，读回时 cls(*args) 重建。args 必须
+        # 与构造签名对齐（diagnostics 转 dict 保 JSON 可序列化，构造时 pydantic
+        # 自动校验回模型）。__str__ 保持人类可读格式不受 args 变化影响。
+        self.args = (
+            phase, code, message, recoverable,
+            self.data.diagnostics.model_dump() if self.data.diagnostics else None,
+        )
+
+    def __str__(self) -> str:
+        return f"[{self.data.phase}:{self.data.code}] {self.data.message}"
 
     @property
     def phase(self) -> str:

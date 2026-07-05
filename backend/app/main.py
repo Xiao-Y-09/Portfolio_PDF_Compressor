@@ -1,10 +1,11 @@
-"""FastAPI 入口（Phase 2 骨架 + Phase 11 扩展）。
+"""FastAPI 入口（Phase 2 骨架 + Phase 11/12 扩展）。
 
 - startup（lifespan）：打印配置概况（隐藏敏感字段）+ 启动定时清理循环
   （每 CLEANUP_INTERVAL_SECONDS 秒调用 storage.cleanup_expired() 清上传文件 +
   orchestrator.cleanup_stale_workspaces() 清过期 review session 工作区，
   铁律 5 兜底、《系统架构设计.md》§4.4/§5.3）。
-- REST 路由在 Phase 12 挂载。
+- REST 路由（Phase 12）：/api/v1 前缀挂载 upload/compress/tasks/download/health；
+  CORS 来源从 config 读取；PhaseError → 4xx/5xx JSON（api/errors.py）。
 - `python -m app.main --check`：自检模式（配置可加载、tmp_dir 可写、Redis 可达性）。
 """
 
@@ -17,7 +18,15 @@ import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import (
+    compress_router,
+    download_router,
+    health_router,
+    register_error_handlers,
+    upload_router,
+)
 from app.config.settings import get_settings, summarize_settings
 from app.pipeline.orchestrator import cleanup_stale_workspaces
 from app.storage import get_storage
@@ -55,6 +64,24 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="PDF Compressor API", lifespan=lifespan)
+
+# CORS（手册 Phase 12 第五项）：允许来源从 config 读取（dev: localhost:3000）
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_settings().api.cors_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 统一错误处理（手册 Phase 12 第六项）：PhaseError → 4xx/5xx；未捕获 → 500 不泄露
+register_error_handlers(app)
+
+# REST 路由（手册 Phase 12 第一至四项）
+API_PREFIX = "/api/v1"
+app.include_router(upload_router, prefix=API_PREFIX)
+app.include_router(compress_router, prefix=API_PREFIX)
+app.include_router(download_router, prefix=API_PREFIX)
+app.include_router(health_router, prefix=API_PREFIX)
 
 
 # ---------- 自检模式 ----------
