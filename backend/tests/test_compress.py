@@ -160,6 +160,35 @@ def test_translucent_encoded_as_png(tmp_path):
         assert im.mode == "RGBA"  # 透明通道保留
 
 
+def test_grayscale_encoded_single_channel_visually_equal(tmp_path):
+    """质量优化 2：灰度图输出 L 模式（1 通道），且像素级视觉无差别。"""
+    ctx = _new_ctx(tmp_path)
+    rnd = random.Random(31)
+    gray = Image.new("RGB", (400, 300))
+    gray.putdata([(v, v, v) for v in (rnd.randrange(256) for _ in range(400 * 300))])
+    buf = io.BytesIO(); gray.save(buf, "JPEG", quality=90)
+    nbytes = put_image(ctx, "images/img_001_000.bin", buf.getvalue())
+
+    img = make_raster_image("images/img_001_000.bin", nbytes, 200.0,
+                            width=400, height=300)
+    img = img.model_copy(update={"is_grayscale": True})
+    page = PageElements(page_number=1, page_width=PAGE_W, page_height=PAGE_H,
+                        raster_images=[img])
+    plan = wrap_plan([PagePlan(page_number=1, raster_plans=[
+        make_plan(0, quality=80, max_dimension=400)])])
+
+    result = execute_compression(plan, [page], ctx, CFG)
+    out_ref = result.per_image_results[0].compressed_data_ref
+    with Image.open(ctx.resolve_ref(out_ref)) as out_im:
+        assert out_im.mode == "L"  # 3→1 通道
+        src_gray = gray.convert("L")
+        diff = sum(abs(a - b) for a, b in
+                   zip(src_gray.getdata(), out_im.getdata())) / (400 * 300)
+        # 阈值按噪声夹具校准：随机噪声是 JPEG 最坏输入，双重编码实测 ~7.5/255；
+        # 真实灰度线稿/照片的差异远低于此
+        assert diff < 10.0
+
+
 # ---------------------------------------------------------------- 容错
 
 def _five_image_page(ctx, corrupt_indices=()) -> PageElements:

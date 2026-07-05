@@ -47,7 +47,8 @@ VEC_RASTERIZED_DIR = "vectors_rasterized"
 
 # 执行层健壮性阈值（手册 Phase 9："整体成功率 < 80% → 抛出 PhaseError"）
 SUCCESS_RATE_MIN = 0.8
-PNG_COMPRESS_LEVEL = 9  # 手册指定：png optimize + compress_level=9
+# PNG 编码参数改由 config 提供（质量优化 4，2026-07-04）：
+# 实测 level≥6 体积零差别、optimize 无增益，默认 level=6 + optimize=False
 
 
 def execute_compression(
@@ -86,6 +87,7 @@ def execute_compression(
             try:
                 out_ref, out_bytes, resize_factor = _compress_image(
                     ctx, src_ref, quality, max_dimension, output_format,
+                    grayscale=image.is_grayscale, config=config,
                 )
             except Exception:
                 logger.warning(
@@ -148,11 +150,13 @@ def execute_compression(
 # ---------------------------------------------------------------- 位图执行
 
 def _compress_image(
-    ctx: PipelineContext, src_ref: str, quality: int, max_dimension: int, fmt: str
+    ctx: PipelineContext, src_ref: str, quality: int, max_dimension: int, fmt: str,
+    grayscale: bool = False, config: CompressionConfig = None,
 ) -> Tuple[str, int, float]:
     """压缩单个唯一图像流。返回 (输出 ref, 字节数, 缩放系数)。
 
     只降不升：产物不小于原件 → 丢弃产物、返回原件引用。
+    质量优化 2：is_grayscale 图转 L/LA 编码（3→1 通道）。
     """
     src_path = ctx.resolve_ref(src_ref)
     original_data = src_path.read_bytes()
@@ -175,15 +179,23 @@ def _compress_image(
             im = background
         elif im.mode not in ("RGB", "L"):
             im = im.convert("RGB")
+        if grayscale and im.mode != "L":
+            im = im.convert("L")  # 3→1 通道
         out_ref = f"{COMPRESSED_DIR}/{stem}.jpg"
         out_path = ctx.resolve_ref(out_ref)
         im.save(str(out_path), "JPEG", quality=quality, optimize=True)
     else:  # png
-        if im.mode not in ("RGBA", "LA"):
+        if grayscale:
+            target_mode = "LA" if ("A" in im.mode or im.mode == "P") else "L"
+            if im.mode != target_mode:
+                im = im.convert(target_mode)  # 3→1 通道（保 alpha）
+        elif im.mode not in ("RGBA", "LA"):
             im = im.convert("RGBA")
         out_ref = f"{COMPRESSED_DIR}/{stem}.png"
         out_path = ctx.resolve_ref(out_ref)
-        im.save(str(out_path), "PNG", optimize=True, compress_level=PNG_COMPRESS_LEVEL)
+        level = config.png_compress_level if config is not None else 6
+        optimize = config.png_optimize if config is not None else False
+        im.save(str(out_path), "PNG", optimize=optimize, compress_level=level)
 
     out_bytes = out_path.stat().st_size
     if out_bytes >= len(original_data):

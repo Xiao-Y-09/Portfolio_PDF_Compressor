@@ -4,7 +4,8 @@
 - skip=true 的页面 raster_plans / vector_plans 为空
 - target_dpi ≤ original_dpi（只降不升，铁律 3；由 decide.py 逻辑保证）
 - quality ∈ [0,100]（契约层）；决策层再收紧到 [quality_floor, quality_ceiling]
-- has_alpha 图片 output_format="png"
+- 所有位图基底 output_format="jpeg"（修订 2026-07-04 架构决策 A2：真透明的 SMask
+  保真由 assemble 层原地替换保证，见《压缩决策引擎.md》§5.4）
 - Σ estimated_bytes ≤ raster_budget × 1.1（预算守恒）
 """
 

@@ -3,8 +3,10 @@
 架构决策 A（2026-07-04，用户裁决）：不再从零重建页面，而是以 split 保存的
 原件副本（tmp_workspace/source.pdf）为基底做**原地替换**：
 - 位图：按 extract 的 sidecar（images/xref_map.json，data_ref → 源 xref）定位，
-  page.replace_image(xref, stream=压缩字节)。同内容多 xref 逐个替换；
-  跨页共享的 xref 天然只有一份流（§3.1.1 的目标由 PDF 结构自身保证）。
+  用 xref_copy(new_xref, xref, keep=["SMask","Mask"]) 只替换 base 流本身
+  （架构决策 A2，2026-07-04）——原 /SMask 引用原样保留，透明与压缩解耦。
+  同内容多 xref 逐个替换；跨页共享的 xref 天然只有一份流（§3.1.1 的目标由
+  PDF 结构自身保证）。
 - 字体：子集化产物（retain_gids=True，字形 ID 稳定）原地替换 FontFile2 流。
 - 文字、矢量、注释、书签、层序：**一个字节不动**——保真由构造保证。
   切换原因：无 ToUnicode 字体的文字层码点不可恢复，重建路线物理上无法
@@ -142,13 +144,37 @@ def _replace_images(doc, best_stream, xref_map, skip_pages, ctx) -> int:
             if xref in done_xrefs:
                 continue
             try:
-                page.replace_image(xref, stream=data)
+                # 只降不升（铁律 3）在替换点的落地：与 PDF 内原 base 对象流比大小
+                # （A2 之后 base 与 SMask 一直是分离对象，比较对象天然一致）
+                old_stream = doc.xref_stream_raw(xref) or b""
+                if old_stream and len(data) >= len(old_stream):
+                    logger.info("xref %d: new stream %d >= original %d, kept",
+                                xref, len(data), len(old_stream))
+                    continue
+                _replace_base_stream(page, xref, data)
                 done_xrefs.add(xref)
                 replaced += 1
             except Exception:
                 logger.warning("xref %d: replace_image failed, original kept",
                                xref, exc_info=True)
     return replaced
+
+
+def _replace_base_stream(page, xref: int, stream: bytes) -> None:
+    """替换 base 图像流，保留 /SMask、/Mask 键不变（架构决策 A2，2026-07-04）。
+
+    等价于 pymupdf.Page.replace_image()，但后者内部 xref_copy(new, old) 是全量
+    覆盖字典——会把已有的 /SMask 引用一并清空，真透明图会因此丢失透明度。这里
+    换成 xref_copy(..., keep=["SMask", "Mask"])：old xref 已有的这两个键在覆盖
+    前不会被清空；新插入的 base 图像本身不含 alpha，也不会用新键覆盖它们，原
+    透明关系因此原样保留。
+    """
+    doc = page.parent
+    new_xref = page.insert_image(page.rect, stream=stream, alpha=0)
+    doc.xref_copy(new_xref, xref, keep=["SMask", "Mask"])
+    last_contents_xref = page.get_contents()[-1]
+    doc.update_stream(last_contents_xref, b" ")
+    page._image_info = None
 
 
 # ---------------------------------------------------------------- 字体原地替换

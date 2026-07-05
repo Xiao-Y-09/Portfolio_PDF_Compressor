@@ -3,7 +3,7 @@
 > **用途**：新对话恢复上下文的唯一入口。配合 CLAUDE.md（宪法/铁律/工作规则）+
 > docs/ 三份真源文档使用，无需回看历史验收报告。
 > **维护规则**：每个 Phase 验收通过后更新本文件（状态节 + Phase 概览行）。
-> 最后更新：2026-07-04（Phase 8 进行中，见文末状态节）。
+> 最后更新：2026-07-04（A2 落地完成，见 §8e）。
 
 ---
 
@@ -114,6 +114,73 @@
 - @10MB 单轮大小：p1 13.53 / p2 32.42 / p3 7.09 MB（p2 超标：矢量原封不动 + R7
   估算偏差；收敛环 Phase 11 处理，未来增强：原地整页光栅化极端矢量页）
 - 测试 148 passed + 1 skipped（原地语义 11 用例 + rebuild 保留 3 用例）
+
+## 8e. ✅ A2 落地完成（2026-07-04）：base+SMask 原地保留，取代 RGBA PNG 合并方案
+
+**任务 a（全量回归，守卫后首次完整跑）**：152 passed + 1 skipped，0 failed；附录 A
+五条铁律 grep 复核全空集。
+
+**任务 b（A2 落地）**：
+- **机制**：extract.py 不再对 translucent 图调用 `_merge_smask`（函数已删除）——
+  img_bytes 就是 base 本身；decide.py `_decide_raster` 的 output_format 统一改为
+  `"jpeg"`（不再按 alpha_type 分流）；assemble.py 新增 `_replace_base_stream()`
+  （`xref_copy(new_xref, xref, keep=["SMask","Mask"])` 替代 `page.replace_image()`）
+  ——base 流被替换，旧 /SMask 引用因 `keep=` 保护不被清空，透明与压缩解耦、零改动
+  保真。手工验证脚本证实：JPEG 替换后 `xref_get_key(xref,"SMask")` 与替换前一致。
+- **文档修订**：《压缩决策引擎.md》§5.4（机制+决策记录，第二版方案标注已废弃）、
+  §3 输出约束、§10 验证清单、flatten 决策记录追加"A2 后更新"；contracts/plan.py
+  docstring 同步。
+- **测试**：test_decide.py::test_07 更名为 `test_07_all_alpha_types_use_jpeg_base`
+  （断言三态 alpha 均输出 jpeg）；test_assemble.py 全部用例（含
+  `test_translucent_replacement_keeps_alpha`/`test_black_scrim_regression`）**未改
+  断言、直接通过**——证明机制按预期工作。
+- **意外发现 + 用户裁决**：assemble_rebuild.py（已退役重建路线）隐式依赖旧合并
+  产物做整页重画合成，A2 后对 translucent 图会画成完全不透明，
+  `test_rebuild_black_scrim_regression` 回归。用户裁决：**不修复该已退役模块**，
+  改为 `@pytest.mark.xfail(strict=True)` 标注 + 模块 docstring 记录已知限制
+  （未来若启用双轨选项 C 需自行在绘制前合并 base+SMask）。
+- **全量回归（含 xfail 标注后）**：151 passed + 1 skipped + 1 xfailed，0 failed。
+- **重产预览件**（单轮无收敛环，Phase 11 前基线；5MB→email 预设、10MB→screen 预设，
+  与 §1.3 用户体验层映射一致）：
+
+  | 样本 | 目标 | A2 前（守卫后） | A2 后 | Δ |
+  |------|------|------|------|---|
+  | p1 | 5MB | 19.12 | **17.02** | -11.0% |
+  | p1 | 10MB | 20.48 | **20.03** | -2.2% |
+  | p2 | 5MB | TARGET_TOO_SMALL | TARGET_TOO_SMALL（不变，矢量下限 8.2MB 本身超 5MB 目标，与 A2 无关） | — |
+  | p2 | 10MB | 41.30 | **31.75** | **-23.1%** ← A2 核心命中目标 |
+  | p3 | 5MB | 11.70 | **11.59** | -0.9% |
+  | p3 | 10MB | 13.45 | **14.09** | +4.8%（见下）|
+
+  p3@10MB 小幅上升的原因：A2 让 translucent 图的预算**估算**从 PNG 系数
+  （0.35 B/px）降到 JPEG 系数（~0.1-0.16 B/px），§7.4 预算再平衡对"总估算"的感知
+  变小，触发的全局 quality 下调幅度对同页 opaque/none 图变轻——本质是估算更准确
+  后重新分配了 quality 预算，不是 bug；单轮无收敛环下这类页内偏移预期存在，
+  Phase 11 的 binary search 会在后续轮次收紧。p2 从 41.30→31.75MB 印证 A2 对
+  original 场景（PNG 膨胀病灶最重的样本）修复有效。
+  预览件：`preview_output/portfolio_{1,2,3}_{5,10}mb.pdf`（p2 5mb 无文件，见上）。
+
+**前瞻风险更新**：R1（flatten 暂缓）标注"触发条件已被 A2 消解"，产品判断维持不做；
+R7（PNG 估算偏低）随 A2 消解（base 统一走 jpeg 估算，不再触碰 png_bytes_per_pixel）；
+R8（translucent 原地膨胀）**已根治**；R9（p2 极端矢量页原地整页光栅化增强）未变、
+仍是 Phase 11+ 议题；新增 R10：assemble_rebuild.py 真透明合成能力已知退化（已 xfail
+标注，不阻塞主干，未来若启用选项 C 需自行处理）。
+
+**待完成（按序）**：①用户目视确认预览件 → ②squash 全部优化轮为正式 commit 并
+push → ③开始 Phase 11（收敛环 + Celery 编排 + review 断点）。
+
+## 8c. 压缩质量优化轮（Phase 11 前，用户指定；2026-07-04）
+
+- 优化 1（opaque→JPEG）：Phase 8 §5.4 修订时已生效，本轮补 E2E 视觉无差别测试
+- 优化 2（灰度降通道）：契约 +is_grayscale（默认 False）；extract 采样检测
+  （容差 2 吸收 JPEG 色度噪声，披露性偏离 R==G==B 规格）；compress 转 L/LA。
+  实测唯一图灰度检出 112/66/85 张；@10MB 尺寸 13.53→13.35 / 32.42→32.32 / 7.09→6.97
+- 优化 3（quality 基准实验）：preview_output/quality_comparison/portfolio_3_page24_q{50..85}.pdf
+  （0.82/0.92/1.06/1.27/1.44MB），等用户目视选基准后改 config。
+  实验方法论教训：必须在 source.pdf 的 xref 空间替换（split 单页是重编号空间）
+- 优化 4（PNG 参数）：实测 level≥6 体积零差别、optimize 无增益 → config 新增
+  png_compress_level=6 / png_optimize=false，compress 改读 config
+- 测试 151 passed + 1 skipped
 
 ## 8b. Phase 10 一轮记录（重建路线，已退役）：assemble_rebuild.py（WIP `38a496e` → `3471d0b` + 标定）
 

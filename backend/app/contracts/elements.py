@@ -27,6 +27,9 @@ class RasterImage(BaseModel):
     # translucent=真透明（Phase 8 必须 PNG）。
     # Producer = Phase 5 SMask 像素采样统计（数百点采样，不扫全图）。
     alpha_type: Literal["none", "opaque", "translucent"]
+    # 修订 2026-07-04（质量优化 2）：灰度检测。Producer = Phase 5 像素采样
+    # （容差 2 吸收 JPEG 色度噪声）；Consumer = Phase 9 转 L/LA 编码（3→1 通道）
+    is_grayscale: bool = False
     # 修订 2026-07-04：Producer = Phase 5 写 data_ref 文件时记录 len(bytes)；
     # Consumer = Phase 8 预算页权重 + RasterPlan.original_bytes（decide 纯函数不能 stat 文件）
     original_bytes: int = Field(ge=0)

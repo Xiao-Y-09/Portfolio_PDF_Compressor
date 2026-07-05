@@ -152,25 +152,43 @@ def test_06_vector_strategy_switching():
     assert strategies[200_000].rasterize_dpi == CFG.rasterize_dpi_medium
 
 
-def test_07_translucent_png_opaque_jpeg():
-    """必测 7：真透明 → png；伪透明/无 alpha → jpeg（§5.4 修订策略）。"""
+def test_07_all_alpha_types_use_jpeg_base():
+    """必测 7（架构决策 A2 修订，2026-07-04）：三态 alpha 的位图基底统一 jpeg——
+    真透明的 SMask 保真改由 assemble 层原地替换保证（keep=["SMask","Mask"]），
+    不再体现为 decide 的 output_format 差异。"""
     pages = [make_page(1, rasters=[
         make_image(PAGE_AREA * 0.3, alpha_type="translucent", data_ref="images/t.bin"),
         make_image(PAGE_AREA * 0.3, alpha_type="opaque", data_ref="images/o.bin"),
         make_image(PAGE_AREA * 0.3, alpha_type="none", data_ref="images/n.bin")])]
     fmts = [rp.output_format for rp in run(pages).pages[0].raster_plans]
-    assert fmts == ["png", "jpeg", "jpeg"]
+    assert fmts == ["jpeg", "jpeg", "jpeg"]
 
 
 def test_08_budget_conservation_after_rebalance():
-    """必测 8：唯一流口径 Σestimated ≤ raster_budget × overshoot_tolerance。"""
-    # 8 张大图 + 很小的目标，逼出两遍再平衡
+    """必测 8：下限不受约束时，唯一流口径 Σestimated ≤ budget × overshoot_tolerance。
+
+    目标按 2026-07-04 目视标定后的下限（q≥50、dpi≥150）校准为可行值：
+    8 张 4000×3000@300dpi 图的下限总成本 ≈2.4MB，2.6MB 目标可守恒。"""
     pages = [make_page(1, rasters=[
         make_image(PAGE_AREA * 0.5, dpi=300.0, width=4000, height=3000,
                    data_ref=f"images/i{n}.bin") for n in range(8)])]
-    plan = run(pages, prefs(target_mb=1.0), irreducible=100_000)
+    plan = run(pages, prefs(target_mb=2.6), irreducible=100_000)
     from app.pipeline.decide import _unique_stream_total
     assert _unique_stream_total(plan.pages, pages) <= plan.raster_budget * CFG.budget_overshoot_tolerance
+
+
+def test_08b_floor_bound_budget_still_emits_plan():
+    """下限触底时（质量优先语义）：Σ 可超预算但必须仍产出 plan（收敛环裁决），
+    且参数精确停在下限，不越界。"""
+    pages = [make_page(1, rasters=[
+        make_image(PAGE_AREA * 0.5, dpi=300.0, width=4000, height=3000,
+                   data_ref=f"images/i{n}.bin") for n in range(8)])]
+    plan = run(pages, prefs(target_mb=1.0), irreducible=100_000)  # 下限总成本 > 1MB
+    for rp in plan.pages[0].raster_plans:
+        assert rp.quality >= CFG.quality_floor
+        assert rp.target_dpi >= min(CFG.dpi_floor, int(rp.original_dpi))
+    from app.pipeline.decide import _unique_stream_total
+    assert _unique_stream_total(plan.pages, pages) > plan.raster_budget  # 触底证据
 
 
 def test_09_convergence_adjustment_on_overshoot():
@@ -325,8 +343,9 @@ def test_f1_p2_5mb_honestly_too_small(p2_prepared):
 
 
 def test_first_round_without_previous_result_ok():
-    """previous_result=None 时使用基准参数表推导，不崩溃（验证清单条目）。"""
+    """previous_result=None 时使用基准参数表推导，不崩溃（验证清单条目）。
+    期望值直接取自 config 预设（2026-07-04 目视标定后 screen=0.3），不硬编码。"""
     pages = [make_page(1, rasters=[make_image(PAGE_AREA * 0.5)])]
-    for target, expected in (("print", 0.2), ("screen", 0.5), ("email", 0.8)):
+    for target, preset in CFG.presets.items():
         plan = run(pages, prefs(target=target))
-        assert plan.base_aggressiveness == pytest.approx(expected)
+        assert plan.base_aggressiveness == pytest.approx(preset.aggressiveness)

@@ -31,18 +31,21 @@ compression:
   pixel_ceiling_ratio: 1.2   # 像素天花板安全余量
 
   # ---- 压缩场景预设 → aggressiveness 映射 ----
+  # 2026-07-04 用户目视标定（DPI 对比实验 dpi_comparison/）：
+  # medium(3.62MB) 与 conservative(3.84MB) 体积差仅 6%，无理由牺牲清晰度；
+  # 5MB 是用户主动选择的极限压缩，画质损失可接受
   presets:
     print:
-      aggressiveness: 0.2
+      aggressiveness: 0.2    # 20MB 打印档，最保守
     screen:
-      aggressiveness: 0.5
+      aggressiveness: 0.3    # 10/15MB 日常档（对应 conservative 目视基准）
     email:
-      aggressiveness: 0.8
+      aggressiveness: 0.8    # 5MB 极限档（对应 aggressive 目视基准）
 
   # ---- 位图参数边界 ----
-  quality_floor: 30          # JPEG 质量绝对下限
+  quality_floor: 50          # JPEG 质量绝对下限（2026-07-04 目视标定：aggressive 档底线）
   quality_ceiling: 95        # JPEG 质量绝对上限（100=无损，浪费）
-  dpi_floor: 72              # DPI 绝对下限
+  dpi_floor: 150             # DPI 绝对下限（2026-07-04 目视标定，72→150）
   dpi_ceiling: 300           # DPI 绝对上限
 
   # ---- 矢量策略阈值 ----
@@ -75,6 +78,10 @@ compression:
   png_bytes_per_pixel: 0.35         # PNG 每像素字节估算（无损经验均值）
   simplify_size_factor: 0.5         # simplify 后体积 ≈ 原始 × 此系数
   budget_overshoot_tolerance: 1.1   # 估算总和 > 预算 × 此值 → 触发再平衡
+  # PNG 编码参数（质量优化 4，2026-07-04 实测扫描：12 张真透明图上
+  # level≥6 体积零差别（261 vs 262KB）、optimize 无增益只费时 → 取最快组合）
+  png_compress_level: 6
+  png_optimize: false
 
 classifier:
   # Phase 6 启发式分类阈值（迁入 config 决策：2026-07-04 用户批准）

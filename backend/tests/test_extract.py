@@ -231,6 +231,45 @@ def test_alpha_type_valid_and_coherent_on_real_samples(extracted):
     assert counts["none"] > 0 and counts["opaque"] > 0 and counts["translucent"] > 0, counts
 
 
+# ---------------------------------------------------------------- 灰度检测（质量优化 2）
+
+def test_grayscale_detection_three_way(tmp_path):
+    """灰度 JPEG（含色度噪声容差）→ True；彩色 → False；L 模式 → True。"""
+    import io as _io
+
+    from PIL import Image as _Image
+
+    doc = pymupdf.open()
+    doc.new_page(width=595, height=842)
+    page = doc[0]
+
+    import random as _random
+    rnd = _random.Random(21)
+    gray = _Image.new("RGB", (64, 64))
+    gray.putdata([(v, v, v) for v in (rnd.randrange(256) for _ in range(64 * 64))])
+    b1 = _io.BytesIO(); gray.save(b1, "JPEG", quality=85)  # JPEG 噪声 → 容差必须生效
+    page.insert_image(pymupdf.Rect(50, 50, 150, 150), stream=b1.getvalue())
+
+    color = _Image.new("RGB", (64, 64))
+    color.putdata([(rnd.randrange(256), rnd.randrange(256), rnd.randrange(256))
+                   for _ in range(64 * 64)])
+    b2 = _io.BytesIO(); color.save(b2, "JPEG", quality=85)
+    page.insert_image(pymupdf.Rect(200, 50, 300, 150), stream=b2.getvalue())
+
+    lmode = _Image.new("L", (64, 64), 128)
+    b3 = _io.BytesIO(); lmode.save(b3, "PNG")
+    page.insert_image(pymupdf.Rect(350, 50, 450, 150), stream=b3.getvalue())
+
+    src = tmp_path / "gray.pdf"
+    doc.save(str(src)); doc.close()
+
+    ctx = _new_ctx(tmp_path)
+    raw = split_pdf(str(src), ctx)
+    pages, _f, _m = extract_elements(raw, str(src), ctx)
+    flags = sorted((img.bbox.x, img.is_grayscale) for img in pages[0].raster_images)
+    assert [f for _x, f in flags] == [True, False, True]
+
+
 # ---------------------------------------------------------------- 单页失败容忍
 
 def test_single_page_failure_yields_empty_elements(tmp_path, caplog, monkeypatch):

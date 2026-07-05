@@ -138,8 +138,10 @@ def _decide_raster(
     max_dimension = max(1, int(display_long_inches * target_dpi * config.pixel_ceiling_ratio))
     max_dimension = min(max_dimension, max(image.width, image.height))
 
-    # §5.4 修订：仅真透明付 PNG 代价；none/opaque（伪透明）→ JPEG
-    output_format = "png" if image.alpha_type == "translucent" else "jpeg"
+    # §5.4 修订（架构决策 A2，2026-07-04）：base+SMask 结构原地保留，SMask 是否
+    # 保真由 assemble 层的 xref_copy(keep=["SMask","Mask"]) 保证，与 decide 的
+    # 格式/质量选择解耦——所有位图基底统一走 JPEG（含真透明）。
+    output_format = "jpeg"
 
     scale = min(1.0, (target_dpi / image.dpi) ** 2)
     pixel_count = image.width * image.height * scale

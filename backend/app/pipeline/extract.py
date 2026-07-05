@@ -191,6 +191,35 @@ def _extract_page(
 ALPHA_SAMPLE_TARGET = 512     # 采样像素数上限（数百点足够判定，不扫全图）
 ALPHA_OPAQUE_RATIO = 0.99     # ≥99% 采样像素为 255 → opaque（伪透明）
 
+# 灰度检测常量（质量优化 2，2026-07-04）
+GRAY_THUMB_SIZE = 48          # 缩略采样边长（~2300 点足够判定）
+GRAY_RATIO_THRESHOLD = 0.95   # 灰度像素占比 > 此值 → is_grayscale
+GRAY_TOLERANCE = 2            # |R-G|/|R-B| 容差：吸收 JPEG 色度噪声
+                              # （严格 R==G==B 会漏检灰度 JPEG，披露性偏离用户规格）
+
+
+def _detect_grayscale(img_bytes: bytes) -> bool:
+    """像素采样灰度检测。L/LA/1 模式直接判真；解码失败保守返回 False。"""
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        im = Image.open(BytesIO(img_bytes))
+        if im.mode in ("L", "LA", "1"):
+            return True
+        im.thumbnail((GRAY_THUMB_SIZE, GRAY_THUMB_SIZE))
+        pixels = list(im.convert("RGB").getdata())
+        if not pixels:
+            return False
+        gray = sum(
+            1 for r, g, b in pixels
+            if abs(r - g) <= GRAY_TOLERANCE and abs(r - b) <= GRAY_TOLERANCE
+        )
+        return gray / len(pixels) >= GRAY_RATIO_THRESHOLD
+    except Exception:
+        return False
+
 
 def _classify_alpha(doc, smask_xref: int) -> str:
     """SMask 像素采样统计 → "opaque"（伪透明）或 "translucent"（真透明）。
@@ -211,31 +240,6 @@ def _classify_alpha(doc, smask_xref: int) -> str:
         return "translucent"
     except Exception:
         return "translucent"
-
-
-def _merge_smask(doc, xref: int, smask_xref: int):
-    """把 SMask 合并进基底图的 alpha 通道，返回 (png_bytes, width, height)。
-
-    失败返回 None（调用方保留基底图并记 warning）。CMYK 等非 RGB 基底先转 RGB
-    （PNG 不支持 CMYK；Pixmap(base, mask) 要求无 alpha 的基底 + 同尺寸灰度掩膜）。
-    """
-    try:
-        base = pymupdf.Pixmap(doc, xref)
-        if base.alpha:  # 基底自带 alpha 的极少数情况：直接导出
-            data = base.tobytes("png")
-            return data, base.width, base.height
-        if base.colorspace is None or base.colorspace.n > 3:
-            base = pymupdf.Pixmap(pymupdf.csRGB, base)
-        mask = pymupdf.Pixmap(doc, smask_xref)
-        if (mask.width, mask.height) != (base.width, base.height):
-            mask = pymupdf.Pixmap(mask, base.width, base.height, None)  # 缩放到同尺寸
-        merged = pymupdf.Pixmap(base, mask)
-        data = merged.tobytes("png")
-        return data, merged.width, merged.height
-    except Exception:
-        logger.warning("smask merge failed (xref %d, smask %d)", xref, smask_xref,
-                       exc_info=True)
-        return None
 
 
 def _extract_rasters(doc, page, page_number: int, ctx: PipelineContext) -> List[RasterImage]:
@@ -280,20 +284,12 @@ def _extract_rasters(doc, page, page_number: int, ctx: PipelineContext) -> List[
             continue
         color_space = str(info.get("cs-name") or info.get("colorspace") or "unknown")
         alpha_type = _classify_alpha(doc, smask) if smask else "none"
+        # 架构决策 A2（2026-07-04，取代原 SMask 合并方案）：base 与 SMask 在源
+        # PDF 中本是独立对象，原地手术只需替换 base 流，SMask 原样保留
+        # （assemble.py 的 xref_copy keep=["SMask","Mask"]）。extract 因此不再
+        # 合并 alpha，img_bytes 就是 base 本身——透明合成完全交给 PDF 渲染器。
 
-        # 修复 2026-07-04（目视验收问题一/二/五根因）：extract_image 返回的是
-        # 不含透明的基底图，而阴影/压暗层的基底常是纯黑像素 + SMask。若原样保存，
-        # 重组时半透明黑纱会变成实心黑板（白底变黑/整页全黑/盖掉矢量）。
-        # 真透明图必须把 SMask 合并进 alpha 通道后以 PNG 保存。
-        if alpha_type == "translucent":
-            merged = _merge_smask(doc, xref, smask)
-            if merged is not None:
-                img_bytes, width, height = merged
-            else:
-                logger.warning(
-                    "page %d xref %d: SMask merge failed, keeping base image",
-                    page_number, xref,
-                )
+        grayscale = _detect_grayscale(img_bytes)  # 质量优化 2：3→1 通道的依据
 
         # 每个 xref 每页只落盘一次；所有摆放共享同一 data_ref
         ref = f"{IMAGES_DIR}/img_{page_number:03d}_{file_index:03d}.bin"
@@ -314,6 +310,7 @@ def _extract_rasters(doc, page, page_number: int, ctx: PipelineContext) -> List[
                 color_space=color_space,
                 has_alpha=(alpha_type == "translucent"),  # 兼容性快捷字段
                 alpha_type=alpha_type,
+                is_grayscale=grayscale,
                 original_bytes=len(img_bytes),  # ← Producer 落地（修订 2026-07-04）
                 bbox=_rect_to_bbox((rect.x0, rect.y0, rect.x1, rect.y1)),
             ))

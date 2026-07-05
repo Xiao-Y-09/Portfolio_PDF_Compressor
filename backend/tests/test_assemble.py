@@ -181,6 +181,40 @@ def test_translucent_replacement_keeps_alpha(tmp_path):
         out.close()
 
 
+def test_opaque_alpha_flattened_to_jpeg_visually_equal(tmp_path):
+    """优化 1 验证（机制自 Phase 8 §5.4 已生效）：opaque（伪透明）图输出为 JPEG，
+    白底 compositing 后与源视觉无差别。"""
+    doc = pymupdf.open()
+    doc.new_page(width=595, height=842)
+    rnd = random.Random(11)
+    rgba = Image.new("RGBA", (400, 300))
+    rgba.putdata([(rnd.randrange(256), rnd.randrange(256), rnd.randrange(256), 255)
+                  for _ in range(400 * 300)])
+    rgba.putpixel((0, 0), (10, 10, 10, 254))  # 1/120000 非 255 → 保住 SMask，仍 ≥99% opaque
+    buf = io.BytesIO(); rgba.save(buf, "PNG")
+    doc[0].insert_image(pymupdf.Rect(60, 60, 460, 360), stream=buf.getvalue())
+    src = tmp_path / "opaque.pdf"
+    doc.save(str(src)); doc.close()
+
+    _ctx, pages, plan, _result, out_path = run_full_pipeline(src, tmp_path)
+
+    assert pages[0].raster_images[0].alpha_type == "opaque"
+    assert plan.pages[0].raster_plans[0].output_format == "jpeg"  # 决策层
+    out = pymupdf.open(out_path)
+    src_doc = pymupdf.open(str(src))
+    try:
+        info = out.extract_image(out[0].get_images(full=True)[0][0])
+        assert info["ext"] in ("jpeg", "jpg")  # 执行+组装层：确实是 JPEG 流
+        # 视觉无差别：渲染像素差应在 JPEG 重压缩噪声量级内
+        m = pymupdf.Matrix(0.5, 0.5)
+        a = src_doc[0].get_pixmap(matrix=m, colorspace=pymupdf.csGRAY).samples
+        b = out[0].get_pixmap(matrix=m, colorspace=pymupdf.csGRAY).samples
+        mean_diff = sum(abs(a[i] - b[i]) for i in range(min(len(a), len(b)))) / min(len(a), len(b))
+        assert mean_diff < 8.0, f"视觉差异过大: {mean_diff}"
+    finally:
+        out.close(); src_doc.close()
+
+
 def test_vectors_untouched(tmp_path):
     doc = pymupdf.open()
     doc.new_page(width=595, height=842)

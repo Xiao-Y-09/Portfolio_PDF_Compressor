@@ -56,9 +56,10 @@ class CompressionPreset(BaseModel):
 
 
 def _default_presets() -> Dict[str, CompressionPreset]:
+    # 2026-07-04 用户目视标定：screen 0.5→0.3（conservative 基准）
     return {
         "print": CompressionPreset(aggressiveness=0.2),
-        "screen": CompressionPreset(aggressiveness=0.5),
+        "screen": CompressionPreset(aggressiveness=0.3),
         "email": CompressionPreset(aggressiveness=0.8),
     }
 
@@ -73,9 +74,10 @@ class CompressionConfig(BaseModel):
     # 场景预设
     presets: Dict[str, CompressionPreset] = Field(default_factory=_default_presets)
     # 位图参数边界
-    quality_floor: int = Field(default=30, ge=0, le=100)
+    # 2026-07-04 用户目视标定：quality_floor 30→50、dpi_floor 72→150
+    quality_floor: int = Field(default=50, ge=0, le=100)
     quality_ceiling: int = Field(default=95, ge=0, le=100)
-    dpi_floor: int = Field(default=72, gt=0)
+    dpi_floor: int = Field(default=150, gt=0)
     dpi_ceiling: int = Field(default=300, gt=0)
     # 矢量策略阈值
     vector_ignore_area_ratio: float = Field(default=0.1, ge=0.0, le=1.0)
@@ -103,6 +105,9 @@ class CompressionConfig(BaseModel):
     png_bytes_per_pixel: float = Field(default=0.35, gt=0.0)
     simplify_size_factor: float = Field(default=0.5, gt=0.0, le=1.0)
     budget_overshoot_tolerance: float = Field(default=1.1, ge=1.0)
+    # PNG 编码参数（质量优化 4 实测：level≥6 体积零差别，optimize 无增益）
+    png_compress_level: int = Field(default=6, ge=0, le=9)
+    png_optimize: bool = False
 
 
 class ClassifierConfig(BaseModel):

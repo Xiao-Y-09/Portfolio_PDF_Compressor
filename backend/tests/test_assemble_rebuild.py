@@ -2,6 +2,9 @@
 
 只保留 3 个核心用例（页数守恒 / 黑纱回归 / 有 ToUnicode 源的 CJK 往返），
 不承担主干职责。主干测试见 test_assemble.py（原地手术）。
+
+已知限制（架构决策 A2，2026-07-04）：黑纱回归用例标记 xfail——A2 后 extract 不
+再合并 SMask，rebuild 路线的真透明合成能力随之退化，详见该用例的 xfail reason。
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ import uuid
 from pathlib import Path
 
 import pymupdf
+import pytest
 
 from app.config.settings import CompressionConfig
 from app.contracts import PipelineContext, UserPreferences
@@ -53,6 +57,14 @@ def test_rebuild_page_count_conservation(tmp_path):
         out.close()
 
 
+@pytest.mark.xfail(
+    reason="已知限制（架构决策 A2，2026-07-04）：extract 不再把 SMask 合并进 alpha"
+           "（现在只输出 base 字节，透明由 assemble.py 原地保留 SMask 引用实现）。"
+           "rebuild 路线整页重画、没有 PDF 原生 SMask 可用，直接吃 data_ref 字节会把"
+           "真透明图画成完全不透明——它本就是已退役、非当前路径的备用模块（未来选项 C "
+           "若真正启用需自行在绘制前合并 SMask），此处不为其单独恢复合并逻辑。",
+    strict=True,
+)
 def test_rebuild_black_scrim_regression(tmp_path):
     import io
 
