@@ -39,6 +39,7 @@ from app.contracts import (
     PipelineContext,
     PreprocessResult,
 )
+from app.pipeline.compress import WHOLE_PAGE_REF
 from app.pipeline.extract import XREF_MAP_REF, _font_key
 
 logger = logging.getLogger("app.pipeline.assemble")
@@ -82,6 +83,7 @@ def assemble_pdf(
     doc = pymupdf.open(str(source))
     try:
         replaced_images = _replace_images(doc, best_stream, xref_map, skip_pages, ctx)
+        replaced_whole = _replace_whole_pages(doc, plans, ctx)
         replaced_fonts = _replace_fonts(doc, preprocess, ctx)
         doc.set_metadata(_cleaned_metadata(metadata, preprocess))
 
@@ -99,8 +101,9 @@ def assemble_pdf(
 
     actual = out_path.stat().st_size
     logger.info(
-        "in-place assembled: %d image xrefs + %d font streams replaced -> %s (%.2fMB)",
-        replaced_images, replaced_fonts, OUTPUT_REF, actual / 1e6,
+        "in-place assembled: %d image xrefs + %d whole pages + %d font streams "
+        "replaced -> %s (%.2fMB)",
+        replaced_images, replaced_whole, replaced_fonts, OUTPUT_REF, actual / 1e6,
     )
     expected = results.total_raster_bytes + preprocess.total_fixed_bytes
     if expected > 0 and abs(actual - expected) / expected > SIZE_DEVIATION_WARN:
@@ -175,6 +178,43 @@ def _replace_base_stream(page, xref: int, stream: bytes) -> None:
     last_contents_xref = page.get_contents()[-1]
     doc.update_stream(last_contents_xref, b" ")
     page._image_info = None
+
+
+# ---------------------------------------------------------------- 整页替换（Tier 2/3）
+
+def _replace_whole_pages(doc, plans: CompressionPlan, ctx) -> int:
+    """整页渲染原语的组装侧（Tier 系统 2026-07-04，§8.5-8.6）。
+
+    对 whole_page_plan 置位的页：清空全部内容流（原矢量/文字/图像调用随之消亡，
+    未引用对象由保存参数 garbage=4 回收），insert_image 铺满页面矩形。
+    页外壳保留 → 链接/书签/注释（都是 contents 之外的对象）原生存续。
+    渲染产物按 compress.WHOLE_PAGE_REF 命名约定确定性定位；产物缺失
+    （渲染失败的容错路径）→ warning + 该页原样保留。
+    """
+    replaced = 0
+    for page_plan in plans.pages:
+        if page_plan.whole_page_plan is None:
+            continue
+        ref = WHOLE_PAGE_REF.format(page=page_plan.page_number)
+        path = ctx.resolve_ref(ref)
+        if not path.is_file():
+            logger.warning("page %d: whole-page render missing (%s), page kept as-is",
+                           page_plan.page_number, ref)
+            continue
+        try:
+            page = doc[page_plan.page_number - 1]
+            # 先 insert 后清空（失败原子性）：insert_image 追加独立内容流，
+            # 若它抛错则原内容流一个字节未动、页面完好；成功后只清空事先
+            # 记录的原有流（不能清 insert 追加的那条）。
+            original_contents = list(page.get_contents())
+            page.insert_image(page.rect, stream=path.read_bytes(), alpha=0)
+            for contents_xref in original_contents:
+                doc.update_stream(contents_xref, b" ")
+            replaced += 1
+        except Exception:
+            logger.warning("page %d: whole-page replace failed, page kept as-is",
+                           page_plan.page_number, exc_info=True)
+    return replaced
 
 
 # ---------------------------------------------------------------- 字体原地替换

@@ -73,8 +73,11 @@ compression:
   rasterize_dpi_small: 96           # 光栅化 DPI（<0.3 档，被 §6.3 门槛封死，保留备用）
   vector_rasterize_min_area_ratio: 0.3   # 面积低于此值不允许 rasterize
   rasterize_estimate_quality: 80    # 光栅化体积估算用的 JPEG quality
-  jpeg_bpp_base: 0.04               # JPEG 每像素字节估算：base + q/100 × coeff
-  jpeg_bpp_quality_coeff: 0.12
+  jpeg_bpp_base: 0.015              # JPEG 每像素字节估算：base + q/100 × coeff
+  jpeg_bpp_quality_coeff: 0.105     # 2026-07-05 实测标定 0.04/0.12 → 0.015/0.105
+                                    # （scripts/calibrate_jpeg_bpp.py，三样本 764 测量点；
+                                    # 原系数在 q30-76 工作区间高估整页 49-76%/元素 17-34%，
+                                    # 是 Tier 3 深度欠冲的直接根因，《压缩决策引擎.md》§5.5）
   png_bytes_per_pixel: 0.35         # PNG 每像素字节估算（无损经验均值）
   simplify_size_factor: 0.5         # simplify 后体积 ≈ 原始 × 此系数
   budget_overshoot_tolerance: 1.1   # 估算总和 > 预算 × 此值 → 触发再平衡
@@ -82,6 +85,12 @@ compression:
   # level≥6 体积零差别（261 vs 262KB）、optimize 无增益只费时 → 取最快组合）
   png_compress_level: 6
   png_optimize: false
+
+  # ---- 分级压缩（Tier 系统，2026-07-04 产品决策，《压缩决策引擎.md》§8.5-8.7）----
+  tier2_budget_margin: 0.9    # Tier 2 贪心选页停止线：下限总成本 ≤ target × 此值（留 10% 给位图）
+  tier3_dpi_floor: 72         # Tier 3 独立 DPI 下限（Tier 1/2 是 150，目视标定值不受污染）
+  tier3_quality_floor: 30     # Tier 3 独立 quality 下限（Tier 1/2 是 50）
+  tier3_dpi_ceiling: 150      # Tier 3 DPI 上限 = Tier 1/2 的下限（语义闭合：Tier 3 最好 = Tier 1/2 最差）
 
 classifier:
   # Phase 6 启发式分类阈值（迁入 config 决策：2026-07-04 用户批准）

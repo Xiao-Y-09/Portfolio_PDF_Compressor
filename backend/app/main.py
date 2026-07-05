@@ -1,7 +1,9 @@
-"""FastAPI 入口（Phase 2）。
+"""FastAPI 入口（Phase 2 骨架 + Phase 11 扩展）。
 
 - startup（lifespan）：打印配置概况（隐藏敏感字段）+ 启动定时清理循环
-  （每 CLEANUP_INTERVAL_SECONDS 秒调用 storage.cleanup_expired()，铁律 5 兜底）。
+  （每 CLEANUP_INTERVAL_SECONDS 秒调用 storage.cleanup_expired() 清上传文件 +
+  orchestrator.cleanup_stale_workspaces() 清过期 review session 工作区，
+  铁律 5 兜底、《系统架构设计.md》§4.4/§5.3）。
 - REST 路由在 Phase 12 挂载。
 - `python -m app.main --check`：自检模式（配置可加载、tmp_dir 可写、Redis 可达性）。
 """
@@ -17,6 +19,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.config.settings import get_settings, summarize_settings
+from app.pipeline.orchestrator import cleanup_stale_workspaces
 from app.storage import get_storage
 
 logger = logging.getLogger("app.main")
@@ -32,6 +35,10 @@ async def _cleanup_loop() -> None:
             storage.cleanup_expired()
         except Exception:  # 清理失败不能拖垮服务，下一轮重试
             logger.exception("periodic cleanup_expired failed")
+        try:
+            cleanup_stale_workspaces()
+        except Exception:
+            logger.exception("periodic cleanup_stale_workspaces failed")
         await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
 
 

@@ -17,4 +17,5 @@ fonttools  # Phase 7 字体子集化（手册 Phase 7 Prompt 列出的依赖）
 
 # 测试
 pytest
+pytest-cov  # 覆盖率报告（Tier 系统步骤 4 用户指定，2026-07-04）
 httpx

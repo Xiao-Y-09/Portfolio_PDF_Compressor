@@ -3,7 +3,7 @@
 > **用途**：新对话恢复上下文的唯一入口。配合 CLAUDE.md（宪法/铁律/工作规则）+
 > docs/ 三份真源文档使用，无需回看历史验收报告。
 > **维护规则**：每个 Phase 验收通过后更新本文件（状态节 + Phase 概览行）。
-> 最后更新：2026-07-04（A2 落地完成，见 §8e）。
+> 最后更新：2026-07-04（Phase 11 完成，待用户验收，见 §9）。
 
 ---
 
@@ -19,9 +19,13 @@
 | 5 | 元素提取 extract.py（alpha_type 三态 + 共享 data_ref 去重） | `e90ab9b` |
 | 6 | 页面分类器 classify.py（启发式 V1，阈值全部 config 驱动） | `e17b77d` |
 | 7 | 预处理 preprocess.py（字体子集化 + 固定开销 + vector_bytes 语义修复） | `afa3c58` |
-| 8 | 决策引擎 decide.py（**进行中**，见文末状态节） | WIP `21a6953`→`56b9dd1` |
+| 8 | 决策引擎 decide.py（纯函数 + F1 成本守卫） | `8ae760c` |
+| 9 | 压缩执行 compress.py（单轮，共享 data_ref 去重） | `b4149ac` |
+| 10 | PDF 重组 assemble.py（原地手术主干，架构决策 A） | `193045d` |
+| 10.5 | 视觉质量校准 + 架构决策 A2（base+SMask 原地保留取代 RGBA PNG 合并） | `9fcd58d` |
+| 11 | 任务编排 orchestrator.py + queue/tasks.py（收敛循环 + Celery + review 断点，**待验收**，见 §9） | WIP |
 
-远程：https://github.com/Xiao-Y-09/Portfolio_PDF_Compressor （main，已推送至 afa3c58）
+远程：https://github.com/Xiao-Y-09/Portfolio_PDF_Compressor （main，已推送至 `9fcd58d`；Phase 11 待验收后 squash push）
 
 ## 2. 关键架构决策记录（只列结论 + 出处，不复述）
 
@@ -166,8 +170,9 @@ R8（translucent 原地膨胀）**已根治**；R9（p2 极端矢量页原地整
 仍是 Phase 11+ 议题；新增 R10：assemble_rebuild.py 真透明合成能力已知退化（已 xfail
 标注，不阻塞主干，未来若启用选项 C 需自行处理）。
 
-**待完成（按序）**：①用户目视确认预览件 → ②squash 全部优化轮为正式 commit 并
-push → ③开始 Phase 11（收敛环 + Celery 编排 + review 断点）。
+**已完成**：①用户目视确认预览件（质量好、透明保留、无黑页无乱码，超标符合
+"单轮无收敛环"预期）→ ②squash 为正式 commit `9fcd58d`「Phase 10.5: visual
+quality calibration (A2 base+SMask)」并 push → ③Phase 11 见 §9。
 
 ## 8c. 压缩质量优化轮（Phase 11 前，用户指定；2026-07-04）
 
@@ -195,3 +200,66 @@ push → ③开始 Phase 11（收敛环 + Celery 编排 + review 断点）。
 - 目视验收物：preview_output/portfolio_{1,2,3}_10mb.pdf（5.87 / 15.66 / 5.92 MB，单轮无收敛）
 - V1 保真近似（目视预期）：层序固定 位图→矢量→文字；文字统一黑色+基线近似；
   书签压平一级；rasterize 区域含层叠内容；form_field/comment 不重建
+
+## 9. Phase 11 状态：✅ 完成，待用户验收（2026-07-04）
+
+**产出**：
+- `backend/app/pipeline/orchestrator.py`（新）：`run_until_classify`（Phase A→B→C）+
+  `resume_after_review`（Phase D0→收敛循环→F）+ `SessionData`（工作区内部工件，非契约）+
+  `save_session`/`load_session`/`workspace_path`/`cleanup_workspace`/
+  `cleanup_stale_workspaces`。不导入 celery/redis，可在无 Celery 环境下直接单元测试。
+- `backend/app/queue/tasks.py`（替换 stub）：`compress_pdf_task`（AWAITING_REVIEW 断点）+
+  `resume_compression_task`（SUCCESS/FAILURE 终结）。Redis session 指针
+  `session:{task_id}` → `{tmp_workspace}`，TTL=`settings.session.review_session_ttl`；
+  工作区目录名即 task_id，无需额外映射表。
+- `backend/app/main.py`：定时清理循环追加 `cleanup_stale_workspaces()`（§4.4 超时策略，
+  与 storage.cleanup_expired 同一防御性设计——按文件 mtime 判断，不依赖 Redis）。
+- 文档：《系统架构设计.md》§5.1 错误码表新增 `SESSION_EXPIRED`。
+
+**收敛循环落地**（《压缩决策引擎.md》§8，铁律 7）：gap_ratio ∈ [-tolerance,0] 达标 /
+(0, tolerance/2] 微超标接受 / 5 轮耗尽后 gap_ratio>0 → `CONVERGENCE_FAILED`
+（phase=orchestrator，recoverable=false）、gap_ratio≤0 接受（宁可小一点也不超标）。
+`ConvergenceStep` 由 orchestrator（而非 Phase 9）在每轮 execute_compression 后追加进
+`ctx.convergence_history`——契约文档标注的"Producer=Phase 9"是设计期措辞，Phase 9
+签名本身缺 target_bytes/fixed_bytes 无法独立算出 gap_ratio，orchestrator 是唯一同时
+掌握全部输入的位置；不算契约违反（字段/语义不变，只是产出时机在编排层）。
+
+**测试**：`test_orchestrator.py`（11 用例，不涉及 Celery/Redis：会话存取往返、
+收敛三种结局、skip override 生效、工作区清理）+ `test_tasks.py`（6 用例，Celery
+eager 模式：完整链路 upload→AWAITING_REVIEW→resume→SUCCESS、进度阶段断言、review
+修改生效、session 不存在/超时、CONVERGENCE_FAILED 仍触发清理、split 失败清理）。
+全量回归 168 passed + 1 skipped + 1 xfailed（含 Phase 10.5 遗留的 assemble_rebuild
+xfail）；附录 A 五条铁律 grep 复核全空集。
+
+**手动验证**（真实 Celery worker + Redis broker，非 eager，模拟未来 Phase 12 会做的
+事）：本机启动 `celery -A app.queue.celery_app worker --pool=solo`（Windows 不支持
+prefork），用独立 storage tmp_dir + Redis db14 隔离，`compress_pdf_task.delay()` →
+`AWAITING_REVIEW` → `resume_compression_task.delay()` → `SUCCESS`，下载产物有效
+（2 页，533878 字节）。验证完成后已停止 worker、清空 db14、删除临时目录。
+
+**Producer-Consumer 审计**：
+- `ConvergenceStep`/`ctx.convergence_history`：曾是"凭空字段"（Phase 8/9 定义时无
+  Producer），本 Phase 补齐 Producer（orchestrator），Consumer 目前是测试断言 +
+  日志；Phase 13 收敛性能统计、Phase 14 前端图表待其消费——非本 Phase 断链。
+- 发现并修复 2 处自查问题（未进最终报告前已改）：① Redis session 载荷曾多存一个
+  从未被读取的 `file_id` 字段（孤儿字段），已删除，`tmp_workspace` 足够定位到
+  `session_data.ctx.file_id`；② `tasks.py` 的 Redis 客户端曾用模块级单例缓存，
+  与 `get_settings()` 在测试中可被 `cache_clear()` 重新配置（切换 db）的事实冲突——
+  单例会绑定到过期连接串；改为每次调用现建（redis-py 连接本身是惰性的，无实质开销）。
+- `modified_classified`（review 修改后的分类）：Consumer 是 `decide_compression` 的
+  `classified` 形参，但 Phase 8 的 decide.py 内部当前并不读取该参数（page_type 尚未
+  驱动决策，是 Phase 8 既有特征非本 Phase 引入）——接口满足、语义未来待用，非断链。
+- `on_progress` 阶段串（split/extract/classify/preprocess/converge/assemble）与
+  《系统架构设计.md》§3.4 的百分比完全对齐，测试已断言；终端 Consumer（前端进度条）
+  要等 Phase 12 REST 层暴露 `GET /api/v1/tasks/:id` 才真正落地——不影响本 Phase 验收。
+
+**已知限制/前瞻风险**：
+- Phase 12（REST API）未建，"手册验证：用 curl 触发完整流程"改为直接 `.delay()` 走
+  真实 worker+broker 验证（见上）；curl 端到端验证留给 Phase 12 完成后补做。
+- decide.py 尚不消费 `classified.page_type`（Phase 8 遗留特征，非阻塞）。
+- R9（p2 极端矢量页原地整页光栅化增强）仍未处理，收敛环本身对矢量页无能为力
+  （assemble.py 目前不落地 vector_plans，见 8a 节）——真实作品集在 Phase 13
+  端到端测试时需重新评估是否阻塞。
+
+**待完成（按序）**：①用户验收本报告 → ②squash 为正式 Phase 11 commit 并 push →
+③开始 Phase 12（REST API 层）。

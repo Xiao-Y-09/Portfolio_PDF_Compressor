@@ -44,6 +44,10 @@ logger = logging.getLogger("app.pipeline.compress")
 COMPRESSED_DIR = "compressed"
 VEC_SIMPLIFIED_DIR = "vectors_simplified"
 VEC_RASTERIZED_DIR = "vectors_rasterized"
+# 整页光栅化产物命名约定（Tier 系统 2026-07-04）：工作区内部工件（非契约），
+# Producer = 本模块 _render_whole_page，Consumer = assemble._replace_whole_pages
+# （按 plan.pages[].whole_page_plan + page_number 确定性重建同一 ref）
+WHOLE_PAGE_REF = COMPRESSED_DIR + "/whole_page_{page:03d}.jpg"
 
 # 执行层健壮性阈值（手册 Phase 9："整体成功率 < 80% → 抛出 PhaseError"）
 SUCCESS_RATE_MIN = 0.8
@@ -70,6 +74,22 @@ def execute_compression(
         if page_plan.skip:
             continue  # 用户意志优先：skip 页不触碰
         page = pages_by_number[page_plan.page_number]
+
+        # ---- 整页光栅化（Tier 2/3，§8.5-8.6）：渲染后本页不再有元素级处理 ----
+        if page_plan.whole_page_plan is not None:
+            attempts += 1
+            try:
+                out_ref, out_bytes = _render_whole_page(
+                    ctx, page_plan.page_number, page_plan.whole_page_plan
+                )
+                unique_stream_bytes[(page_plan.page_number, out_ref)] = out_bytes
+            except Exception:
+                logger.warning(
+                    "page %d: whole-page rasterization failed, page left in place",
+                    page_plan.page_number, exc_info=True,
+                )
+                failures += 1
+            continue
 
         # ---- 位图：按 data_ref 分组去重压缩 ----
         groups: Dict[str, List[RasterPlan]] = {}
@@ -144,7 +164,31 @@ def execute_compression(
         per_image_results=per_image_results,
         round_number=plan.round_number,
         base_aggressiveness=plan.base_aggressiveness,  # 原样回带（反馈环闭合）
+        tier_used=plan.tier,                           # 原样回带（同上通路）
     )
+
+
+# ---------------------------------------------------------------- 整页光栅化（Tier 2/3）
+
+def _render_whole_page(ctx: PipelineContext, page_number: int, wpp) -> Tuple[str, int]:
+    """整页渲染原语的执行侧：split 单页 PDF → 指定 DPI 渲染 → JPEG。
+
+    Tier 2 与 Tier 3 共用（页集合由 decide 决定，本函数不做决策）。
+    页内容替换在 assemble._replace_whole_pages（职责分离：渲染归执行层，
+    替换归组装层）。返回 (输出 ref, 字节数)。
+    """
+    page_pdf = ctx.resolve_ref(f"pages/page_{page_number}.pdf")
+    doc = pymupdf.open(str(page_pdf))
+    try:
+        zoom = wpp.dpi / 72.0
+        pix = doc[0].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+    finally:
+        doc.close()
+    im = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+    out_ref = WHOLE_PAGE_REF.format(page=page_number)
+    out_path = ctx.resolve_ref(out_ref)
+    im.save(str(out_path), "JPEG", quality=wpp.quality, optimize=True)
+    return out_ref, out_path.stat().st_size
 
 
 # ---------------------------------------------------------------- 位图执行

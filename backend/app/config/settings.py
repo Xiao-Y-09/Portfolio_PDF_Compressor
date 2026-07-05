@@ -100,14 +100,21 @@ class CompressionConfig(BaseModel):
     rasterize_dpi_small: int = Field(default=96, gt=0)
     vector_rasterize_min_area_ratio: float = Field(default=0.3, ge=0.0, le=1.0)
     rasterize_estimate_quality: int = Field(default=80, ge=0, le=100)
-    jpeg_bpp_base: float = Field(default=0.04, gt=0.0)
-    jpeg_bpp_quality_coeff: float = Field(default=0.12, ge=0.0)
+    # 2026-07-05 实测标定（scripts/calibrate_jpeg_bpp.py，764 测量点）：
+    # 0.04/0.12 → 0.015/0.105，详见《压缩决策引擎.md》§5.5 标定记录
+    jpeg_bpp_base: float = Field(default=0.015, gt=0.0)
+    jpeg_bpp_quality_coeff: float = Field(default=0.105, ge=0.0)
     png_bytes_per_pixel: float = Field(default=0.35, gt=0.0)
     simplify_size_factor: float = Field(default=0.5, gt=0.0, le=1.0)
     budget_overshoot_tolerance: float = Field(default=1.1, ge=1.0)
     # PNG 编码参数（质量优化 4 实测：level≥6 体积零差别，optimize 无增益）
     png_compress_level: int = Field(default=6, ge=0, le=9)
     png_optimize: bool = False
+    # 分级压缩（Tier 系统，2026-07-04，《压缩决策引擎.md》§8.5-8.7）
+    tier2_budget_margin: float = Field(default=0.9, gt=0.0, le=1.0)  # §8.6 贪心选页停止线
+    tier3_dpi_floor: int = Field(default=72, gt=0)          # §8.7 Tier 3 独立下限（裁决 2）
+    tier3_quality_floor: int = Field(default=30, ge=0, le=100)
+    tier3_dpi_ceiling: int = Field(default=150, gt=0)       # = Tier 1/2 dpi_floor，语义闭合
 
 
 class ClassifierConfig(BaseModel):

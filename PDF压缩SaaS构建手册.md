@@ -1692,3 +1692,103 @@ def get_classifier(config):
 如果需要为用户提供历史记录、批量处理、订阅计费等功能，可以在 Phase 12 之前插入一个"账户与鉴权"Phase。参考 QuantSaaS 构建手册的 Phase 2 的 auth 部分。
 
 对于纯工具型应用（用户不需要登录就能用），可以完全不做账户系统。
+
+---
+
+## 实施期架构演进（Phase 4-11 期间对原手册的重大偏离，2026-07-05 首建）
+
+> **本章的地位**：原手册是设计期文档，本章记录实施期用真实数据推翻/扩展原设计的
+> 重大架构决策。每条按固定格式：为什么原手册不能满足 / 发现过程 / 最终方案 /
+> 契约与架构变化。**未来任何人接手本项目，先读三份真源文档，再读本章。**
+> 维护规则（CLAUDE.md 工作方式约定）：每个 Phase 验收结束时，若发生原手册未预见的
+> 重大决策，按同样格式追加至本章。
+
+### 演进 1：分级降级压缩架构（Tier System，2026-07-04 产品决策）
+
+**为什么原手册不能满足**：原手册假设"单策略压缩 + 收敛环"覆盖所有场景，收敛失败
+按铁律 7 明确报错（TARGET_TOO_SMALL / CONVERGENCE_FAILED）。真实数据证伪了这个
+假设：矢量重作品集会撞到物理下限——portfolio_2 的矢量内容流下限 8.2MB 本身就超过
+5MB 目标，任何参数调优都无解。而在设计求职场景中"压到目标大小"是硬指标（申请
+门户的上传上限），用户宁可"文字略模糊但达标"，也不要"质量高但交不上"——终态
+报错在产品上是失败的。
+
+**发现过程**：Phase 11 收敛环首次真实样本实测（三作品集 × 5/10MB 六场景），
+p2@5MB 直接 TARGET_TOO_SMALL，其余五场景全部 CONVERGENCE_FAILED——收敛环在
+单策略下对真实作品集近乎全军覆没。
+
+**最终方案**：三级降级状态机（orchestrator 层）——
+`in_place`（保真，现状 A2 原地手术）→ `hybrid`（贪心选出的重矢量页整页光栅化，
+其余页保真；选页纯函数在 decide.py，字节说话+最小化光栅化页数）→ `full_raster`
+（全部非 skip 页整页光栅化，独立质量下限 tier3_dpi_floor=72/tier3_quality_floor=30/
+tier3_dpi_ceiling=150，与 Tier 1/2 的目视标定 floor 隔离）。review 断点只在 Tier 1
+前触发一次，降级事后告知（tier_used + 警告文案 + 可重试更大目标）；三级耗尽才报
+CONVERGENCE_FAILED，且必须携带可行动诊断（skip 页统计 + 真实最优可达大小）。
+skip 页在任何 Tier 下不被触碰（铁律 4 升格为契约层 model_validator）。
+
+**契约与架构变化**：contracts 层新增 `CompressionTier`（Literal + COMPRESSION_TIERS
+有序 tuple，顺序即降级方向）、`WholePageRasterPlan`、`PagePlan.whole_page_plan`
+（互斥约束构造即校验）、`CompressionPlan.tier`、`CompressionResult.tier_used`（Phase 9
+原样回带）、`ConvergenceStep.tier`、`ConvergenceDiagnostics` + `PhaseErrorData.diagnostics`。
+config 新增 tier2_budget_margin / tier3_* 四键。整页光栅化原语一次实现两级复用：
+渲染归 compress.py、页内容替换归 assemble.py（先 insert 后清空原内容流，失败原子性）。
+规格全文：《压缩决策引擎.md》§8.5-8.7、《系统架构设计.md》§3.5/§4.5。
+
+### 演进 2：Tier 边界真实值判定 + 估算体系两次修正（2026-07-04/05）
+
+**为什么原手册不能满足**：原手册 §8.1 收敛环用估算判断达标
+（`total_raster_bytes + total_fixed_bytes`）。切换原地手术主干（演进 3）后，
+`total_fixed_bytes` 的矢量口径仍按重建语义估算，而原地手术根本不重建——估算与
+真实装配大小的偏差实测最高 +134%（p1），用估算做降级决策会把"实际已达标"的
+任务误降级，平白损失质量。
+
+**发现过程**：Phase 11 收敛实测的诊断轮——对每个场景在收敛环结束后强制执行一次
+真实 assemble 对照，暴露估算 vs 真实的系统性断裂（p1 +127~135%、p2 +15%、p3 +0.2%，
+偏差量与矢量含量正相关）。
+
+**最终方案（三层递进）**：
+1. **边界真实判定**（2026-07-04 裁决）：每个 Tier 结束执行真实 assemble + stat 文件
+   大小，用真实值决定接受/降级；环内仍用估算求快。被接受 Tier 的 assemble 产物即
+   最终输出（Tier 1 一次通过零额外开销），每任务最多多付 1-2 次 assemble。
+2. **环内基准修正**（2026-07-05 裁决，"用错字段"性质）：环内 gap 的 fixed 基准从
+   `pre.total_fixed_bytes` 改为 `target − plan.raster_budget`（decide 本就算对的
+   Tier 一致口径 floor）。旧基准恒虚高 → 每 Tier 被推到激进度上限、参数钉死 floor，
+   首轮验收 6 场景全落 full_raster 且欠冲 34-48%。
+3. **JPEG 估算系数实测标定**（2026-07-05 破例把 R7/Phase 13 事项提前）：基准修正后
+   系数偏差成为唯一拦路虎——§5.5 公式在工作区间高估整页 49-76%，decide 内部再平衡
+   据此钳制参数与外层环打架。用三样本 764 个受控测量点标定 0.04/0.12 → 0.015/0.105
+   （scripts/calibrate_jpeg_bpp.py，可复用）。标定后欠冲收敛至 -18~+0.7%，
+   p2@10MB / p3@10MB 落在目标 ±1.2% 内。
+架构级防御：环内基准不变量测试（total_bytes − raster ≡ target − raster_budget）
+锁死回归路径。
+
+**契约与架构变化**：orchestrator `_run_tier` / `_actual_size`；
+《压缩决策引擎.md》§8.1 修订 + §5.5 标定记录；config 系数更新。
+估算的剩余已知界限：q≥95 处线性公式低估 38-41%（PIL 色度子采样阶跃），方向安全
+（低估→再平衡宽松→真实字节驱动的外层环兜底）；PNG 系数为死路径（A2 后 decide
+只出 jpeg），R7 就此关闭。
+
+### 演进 3：原地手术架构（Phase 10 从重建改为原地手术，2026-07-04 架构决策 A/A2）
+
+**为什么原手册不能满足**：原手册 Phase 10 的组装语义是"重建"——新建空白 PDF，
+逐页插入压缩后的位图、重绘矢量、重写文字。目视验收发现结构性死路：设计软件导出的
+PDF 常含**无 ToUnicode 的字体**（如 AdobeSongStd），其文字层码点物理不可恢复
+（QC 实测：源文字层 CJK 提取为 0 但嵌有中文字体）——重建路径无论如何实现都会
+把这类中文变成乱码或丢失。
+
+**发现过程**：Phase 10 一轮目视验收五项问题（白底变黑/整页全黑/中文乱码/空白页/
+矢量被盖），前四项可修，唯独 ToUnicode 缺失是不可修的物理限制 → 用户裁决主干换路线。
+
+**最终方案**：assemble.py 重写为"复制原 PDF + 原地替换"——split 保存 source.pdf
+副本；extract 写 sidecar（images/xref_map.json：data_ref → 源 xref）；assemble 按
+xref 定位替换位图流；字体子集化用 retain_gids=True 保字形 ID 稳定 + PUA/控制符
+门禁。文字/矢量/z-order/链接/书签**一个字节不动——保真由构造保证**。
+后续深化 A2（2026-07-04）：真透明图不再合并 RGBA PNG（合并重编码比源内
+"JPEG 基底+独立 SMask"大 4-10 倍），改为 `xref_copy(keep=["SMask","Mask"])`
+只替换基底流、SMask 引用原样保留——透明与压缩解耦。
+
+**契约与架构变化**：extract 增加 xref sidecar（工作区内部工件，非契约）；
+重建路径退役为 assemble_rebuild.py（保留供未来"双轨选项 C"，其真透明合成能力
+在 A2 后已知退化，对应测试 xfail 标注）。已知代价 R9：原地语义下元素级矢量策略
+（simplify/rasterize）不被执行，矢量原样保留——该缺口后来正是由演进 1 的 Tier 2
+整页光栅化补上（选页函数的保留成本按原地真实语义计算）。三项演进环环相扣：
+演进 3 造成的估算口径断裂由演进 2 修复，造成的矢量缺口由演进 1 补齐。

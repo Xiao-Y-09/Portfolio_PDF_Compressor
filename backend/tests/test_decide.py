@@ -266,8 +266,9 @@ def test_shared_data_ref_counted_once_in_budget():
 def test_f1_cost_guard_degrades_expensive_rasterize():
     """F1（2026-07-04）：rasterize 估算 ≥ keep 成本 → 降级 simplify。
 
-    大 bbox（0.9 页面）整页级矢量：rasterize@200dpi ≈ 474KB ≥ keep 360KB → 降级。"""
-    big_cheap_keep = make_vector(120_000, PAGE_AREA * 0.9, original_bytes=360_000)
+    大 bbox（0.9 页面）整页级矢量：rasterize@200dpi ≈ 344KB ≥ keep 320KB → 降级。
+    （keep 阈值随 2026-07-05 JPEG 系数标定同步：bpp(q80) 0.136 → 0.099）"""
+    big_cheap_keep = make_vector(120_000, PAGE_AREA * 0.9, original_bytes=320_000)
     plan = run([make_page(1, vectors=[big_cheap_keep])])
     vp = plan.pages[0].vector_plans[0]
     assert vp.strategy == "simplify"

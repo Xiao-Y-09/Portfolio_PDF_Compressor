@@ -18,12 +18,21 @@ from app.contracts.fonts import FontUsage, SubsetResult
 from app.contracts.geometry import BBox
 from app.contracts.pages import ClassifiedPage, PageElements, RawPage
 from app.contracts.pipeline import (
+    ConvergenceDiagnostics,
     ConvergenceStep,
     PhaseError,
     PhaseErrorData,
     PipelineContext,
 )
-from app.contracts.plan import CompressionPlan, PagePlan, RasterPlan, VectorPlan
+from app.contracts.plan import (
+    COMPRESSION_TIERS,
+    CompressionPlan,
+    CompressionTier,
+    PagePlan,
+    RasterPlan,
+    VectorPlan,
+    WholePageRasterPlan,
+)
 from app.contracts.preferences import CompressionTarget, PageOverride, UserPreferences
 from app.contracts.preprocess import PerPageFixedBytes, PreprocessResult
 from app.contracts.result import CompressionResult, ImageResult
@@ -53,6 +62,10 @@ __all__ = [
     "VectorPlan",
     "PagePlan",
     "CompressionPlan",
+    # tier system (2026-07-04)
+    "CompressionTier",
+    "COMPRESSION_TIERS",
+    "WholePageRasterPlan",
     # result (Phase 9)
     "ImageResult",
     "CompressionResult",
@@ -62,6 +75,7 @@ __all__ = [
     # cross-cutting
     "PipelineContext",
     "ConvergenceStep",
+    "ConvergenceDiagnostics",
     "PhaseErrorData",
     "PhaseError",
 ]

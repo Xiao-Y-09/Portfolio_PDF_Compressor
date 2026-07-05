@@ -25,13 +25,14 @@ data_ref 取各摆放中最大 estimated_bytes"求和——逐摆放累加会把
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from app.config.settings import CompressionConfig
 from app.contracts import (
     ClassifiedPage,
     CompressionPlan,
     CompressionResult,
+    CompressionTier,
     PageElements,
     PagePlan,
     PhaseError,
@@ -41,6 +42,7 @@ from app.contracts import (
     UserPreferences,
     VectorPath,
     VectorPlan,
+    WholePageRasterPlan,
 )
 
 BYTES_PER_MB = 1024 * 1024   # 单位换算，非可调参数
@@ -222,6 +224,126 @@ def _decide_vector(
     return plan, rasterize_cost
 
 
+# ---------------------------------------------------------------- Tier 2/3 整页光栅化（§8.5-8.7）
+
+def _tier_bounds(tier: str, config: CompressionConfig) -> Tuple[int, int, int, int]:
+    """(quality_floor, quality_ceiling, dpi_floor, dpi_ceiling)。
+
+    Tier 3 用独立下限（§8.7 用户裁决 2）："达标优先于质量"哲学下允许突破目视
+    标定 floor，但绝不污染 Tier 1/2 的标定值。契约层只管通用界（§1.5 约定），
+    这里是 config 相关界的唯一收紧点。
+    """
+    if tier == "full_raster":
+        return (config.tier3_quality_floor, config.quality_ceiling,
+                config.tier3_dpi_floor, config.tier3_dpi_ceiling)
+    return (config.quality_floor, config.quality_ceiling,
+            config.dpi_floor, config.dpi_ceiling)
+
+
+def _make_whole_page_plan(
+    page: PageElements, aggressiveness: float, tier: str, config: CompressionConfig
+) -> WholePageRasterPlan:
+    """整页光栅化计划：参数从 aggressiveness 经 §4.3 lerp 推导（整页即满页主图，
+    area_ratio=1，无面积修正），边界按 Tier 取（§8.7）。"""
+    q_floor, q_ceiling, d_floor, d_ceiling = _tier_bounds(tier, config)
+    quality = int(round(_lerp(float(q_ceiling), float(q_floor), aggressiveness)))
+    dpi = max(1, int(_lerp(float(d_ceiling), float(d_floor), aggressiveness)))
+    return WholePageRasterPlan(
+        dpi=dpi, quality=quality,
+        estimated_bytes=_estimate_whole_page_bytes(page, dpi, quality, config),
+    )
+
+
+def _estimate_whole_page_bytes(
+    page: PageElements, dpi: int, quality: int, config: CompressionConfig
+) -> int:
+    pixel_count = (
+        (page.page_width / POINTS_PER_INCH * dpi)
+        * (page.page_height / POINTS_PER_INCH * dpi)
+    )
+    return _estimate_raster_bytes(pixel_count, quality, "jpeg", config)
+
+
+def _page_floor_raster_estimate(page: PageElements, config: CompressionConfig) -> int:
+    """该页唯一位图在标准下限参数（dpi_floor/quality_floor）下的估算成本之和
+    （§8.6 保留成本的位图分量——in_place 语义下这已是位图的可达下限）。"""
+    seen: Dict[str, int] = {}
+    for img in page.raster_images:
+        if img.data_ref in seen:
+            continue
+        scale = min(1.0, (config.dpi_floor / img.dpi) ** 2)
+        seen[img.data_ref] = _estimate_raster_bytes(
+            img.width * img.height * scale, config.quality_floor, "jpeg", config
+        )
+    return sum(seen.values())
+
+
+def select_whole_pages(
+    pages: List[PageElements],
+    preprocess: PreprocessResult,
+    user_prefs: UserPreferences,
+    config: CompressionConfig,
+    tier: CompressionTier,
+) -> Set[int]:
+    """§8.6 选页（纯函数）：返回需整页光栅化的 page_number 集合。
+
+    - in_place → 空集；full_raster → 全部非 skip 页；
+    - hybrid → 候选资格（光栅化真的省钱）+ 贪心（净节省降序，选够即停）。
+      估算用 Tier 预设激进度（非轮次调整值）——选页在收敛轮之间保持稳定，
+      不随 aggressiveness 步进抖动；whole_page_plan 的实际参数仍按轮次推导。
+    - skip 页无条件排除（铁律 4，三个 Tier 一致）。
+    """
+    if tier == "in_place":
+        return set()
+    skip_pages = {
+        o.page_number for o in user_prefs.per_page_overrides if o.action == "skip"
+    }
+    if tier == "full_raster":
+        return {p.page_number for p in pages if p.page_number not in skip_pages}
+
+    # ---- hybrid：候选资格 + 贪心 ----
+    # 保留成本按**原地手术真实语义**：矢量原样保留（in_place 不执行元素级
+    # simplify/rasterize 策略——8a 架构记录/R9，这正是 Tier 2 存在的原因），
+    # 因此矢量分量用 original_bytes，而非 _decide_vector 的计划下限（那是
+    # 重建语义的虚构值，会让重矢量页永远"看起来不值得整页光栅化"）。
+    preset_aggr = _initial_aggressiveness(user_prefs, config)
+    target_bytes = int(user_prefs.target_size_mb * BYTES_PER_MB)
+    fixed_by_page = {pp.page_number: pp for pp in preprocess.per_page_fixed_bytes}
+    vector_fixed = sum(pp.vector_bytes for pp in preprocess.per_page_fixed_bytes)
+    irreducible = preprocess.total_fixed_bytes - vector_fixed
+
+    skip_floor = 0          # skip 页原样保留成本（矢量 + 位图）
+    vec_retained: Dict[int, int] = {}
+    candidates: List[Tuple[int, int, int, int, int]] = []
+    for page in pages:
+        if page.page_number in skip_pages:
+            skip_floor += sum(v.original_bytes for v in page.vector_paths)
+            skip_floor += _unique_original_raster_bytes(page)
+            continue
+        vec_bytes = sum(v.original_bytes for v in page.vector_paths)
+        vec_retained[page.page_number] = vec_bytes
+        fx = fixed_by_page.get(page.page_number)
+        text_bytes = fx.text_bytes if fx is not None else 0
+        keep_cost = vec_bytes + text_bytes + _page_floor_raster_estimate(page, config)
+        whole_est = _make_whole_page_plan(page, preset_aggr, tier, config).estimated_bytes
+        if whole_est < keep_cost:  # 资格：F1 成本守卫的反向应用
+            savings = keep_cost - whole_est
+            candidates.append((savings, page.page_number, whole_est, text_bytes, vec_bytes))
+
+    # 贪心：净节省降序纳入，floor 降到停止线即停（最小化被光栅化的页数）
+    floor = irreducible + skip_floor + sum(vec_retained.values())
+    stop_line = target_bytes * config.tier2_budget_margin
+    selected: Set[int] = set()
+    for savings, page_number, whole_est, text_bytes, vec_bytes in sorted(
+        candidates, key=lambda c: (-c[0], c[1])
+    ):
+        if floor <= stop_line:
+            break
+        floor = floor - vec_bytes - text_bytes + whole_est
+        selected.add(page_number)
+    return selected
+
+
 # ---------------------------------------------------------------- 预算口径（共享 data_ref）
 
 def _unique_stream_total(page_plans: List[PagePlan], pages: List[PageElements]) -> int:
@@ -256,11 +378,16 @@ def decide_compression(
     previous_result: Optional[CompressionResult],
     round_number: int,
     config: CompressionConfig,
+    tier: CompressionTier = "in_place",
 ) -> CompressionPlan:
     target_bytes = int(user_prefs.target_size_mb * BYTES_PER_MB)
     overrides = {o.page_number: o.action for o in user_prefs.per_page_overrides}
+    # Tier 2/3（§8.5-8.6）：需整页光栅化的页集合（纯函数选页，skip 页永不入选）
+    whole_pages = select_whole_pages(pages, preprocess, user_prefs, config, tier)
+    fixed_by_page = {pp.page_number: pp for pp in preprocess.per_page_fixed_bytes}
 
     # 一、矢量决策先行（策略与预算无关 → 矢量计划成本 = 可达下限）
+    #    整页光栅化的页不出矢量计划——其矢量随页内容一并消亡
     vector_plans_by_page: Dict[int, List[VectorPlan]] = {}
     vector_planned_total = 0
     skip_raster_bytes = 0
@@ -271,6 +398,8 @@ def decide_compression(
             vector_planned_total += sum(v.original_bytes for v in page.vector_paths)
             skip_raster_bytes += _unique_original_raster_bytes(page)
             continue
+        if page.page_number in whole_pages:
+            continue
         plans: List[VectorPlan] = []
         for gi, vec in enumerate(page.vector_paths):
             vplan, cost = _decide_vector(vec, gi, page_area, config)
@@ -279,8 +408,13 @@ def decide_compression(
         vector_plans_by_page[page.page_number] = plans
 
     # 二、预算计算（§7.1 修订：基于不可削减下限）
+    #    整页光栅化的页：其文字结构开销随内容流替换一并消亡，从不可削减中扣除；
+    #    其整页图像成本是可调节项（随 quality/DPI 收敛），计入预算消耗而非下限
     vector_fixed = sum(pp.vector_bytes for pp in preprocess.per_page_fixed_bytes)
-    irreducible_fixed = preprocess.total_fixed_bytes - vector_fixed
+    whole_text_removed = sum(
+        fixed_by_page[pn].text_bytes for pn in whole_pages if pn in fixed_by_page
+    )
+    irreducible_fixed = preprocess.total_fixed_bytes - vector_fixed - whole_text_removed
     floor_bytes = irreducible_fixed + vector_planned_total + skip_raster_bytes
     raster_budget = target_bytes - floor_bytes
     if raster_budget <= 0:
@@ -288,7 +422,7 @@ def decide_compression(
             phase="decide",
             code="TARGET_TOO_SMALL",
             message=(
-                f"不可削减开销 {floor_bytes} 字节（固定 {irreducible_fixed}"
+                f"[tier={tier}] 不可削减开销 {floor_bytes} 字节（固定 {irreducible_fixed}"
                 f" + 矢量下限 {vector_planned_total} + skip 页位图 {skip_raster_bytes}）"
                 f"已超过目标 {target_bytes} 字节"
             ),
@@ -303,7 +437,7 @@ def decide_compression(
             previous_result, raster_budget, config
         )
 
-    # 四、位图决策（skip 页除外；aggressive 页加一档激进度）
+    # 四、页计划（skip 页除外；aggressive 页加一档激进度；whole 页出整页计划）
     page_plans: List[PagePlan] = []
     for page in pages:
         if overrides.get(page.page_number) == "skip":
@@ -314,6 +448,13 @@ def decide_compression(
             page_aggr = _clamp(
                 base_aggressiveness + config.aggressiveness_step_large, 0.0, 1.0
             )
+        if page.page_number in whole_pages:
+            page_plans.append(PagePlan(
+                page_number=page.page_number,
+                skip=False,
+                whole_page_plan=_make_whole_page_plan(page, page_aggr, tier, config),
+            ))
+            continue
         page_area = page.page_width * page.page_height
         raster_plans = [
             _decide_raster(img, i, page_area, page_aggr, config)
@@ -326,23 +467,48 @@ def decide_compression(
             vector_plans=vector_plans_by_page.get(page.page_number, []),
         ))
 
-    # 五、预算校验与再平衡（§7.4；唯一流口径）
-    total_estimated = _unique_stream_total(page_plans, pages)
+    # 五、预算校验与再平衡（§7.4；唯一流口径 + 整页计划）
+    tier_q_floor, _q_ceiling, tier_d_floor, _d_ceiling = _tier_bounds(tier, config)
+    pages_by_number = {p.page_number: p for p in pages}
+
+    def _total_estimated() -> int:
+        whole_total = sum(
+            pp.whole_page_plan.estimated_bytes
+            for pp in page_plans if pp.whole_page_plan is not None
+        )
+        return _unique_stream_total(page_plans, pages) + whole_total
+
+    total_estimated = _total_estimated()
     if total_estimated > raster_budget * config.budget_overshoot_tolerance:
-        # 第一遍：线性缩 quality
+        # 第一遍：线性缩 quality（元素级与整页计划同步缩，floor 按 Tier 取）
         scale = raster_budget / total_estimated
         for plan_page, page in zip(page_plans, pages):
             if plan_page.skip:
                 continue
+            if plan_page.whole_page_plan is not None:
+                wpp = plan_page.whole_page_plan
+                wpp.quality = max(tier_q_floor, int(wpp.quality * scale))
+                wpp.estimated_bytes = _estimate_whole_page_bytes(
+                    pages_by_number[plan_page.page_number], wpp.dpi, wpp.quality, config
+                )
+                continue
             for rp in plan_page.raster_plans:
                 rp.quality = max(config.quality_floor, int(rp.quality * scale))
                 _reestimate(rp, page.raster_images[rp.image_index], config)
-        total_estimated = _unique_stream_total(page_plans, pages)
+        total_estimated = _total_estimated()
         if total_estimated > raster_budget * config.budget_overshoot_tolerance:
             # 第二遍：quality 见底仍超 → 按面积比例缩 DPI（像素数 ∝ dpi²）
             dpi_scale = (raster_budget / total_estimated) ** 0.5
             for plan_page, page in zip(page_plans, pages):
                 if plan_page.skip:
+                    continue
+                if plan_page.whole_page_plan is not None:
+                    wpp = plan_page.whole_page_plan
+                    floor_guard = min(tier_d_floor, wpp.dpi)
+                    wpp.dpi = max(1, max(int(wpp.dpi * dpi_scale), floor_guard))
+                    wpp.estimated_bytes = _estimate_whole_page_bytes(
+                        pages_by_number[plan_page.page_number], wpp.dpi, wpp.quality, config
+                    )
                     continue
                 for rp in plan_page.raster_plans:
                     image = page.raster_images[rp.image_index]
@@ -363,4 +529,5 @@ def decide_compression(
         pages=page_plans,
         round_number=round_number,
         base_aggressiveness=base_aggressiveness,
+        tier=tier,
     )

@@ -12,11 +12,14 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from app.contracts import (
+    COMPRESSION_TIERS,
     Annotation,
     BBox,
     ClassifiedPage,
     CompressionPlan,
     CompressionResult,
+    CompressionTier,
+    ConvergenceDiagnostics,
     ConvergenceStep,
     FontUsage,
     ImageResult,
@@ -36,6 +39,7 @@ from app.contracts import (
     UserPreferences,
     VectorPath,
     VectorPlan,
+    WholePageRasterPlan,
     XObject,
 )
 
@@ -100,7 +104,15 @@ SAMPLES: list[BaseModel] = [
                       round_number=2, base_aggressiveness=0.58),
     ConvergenceStep(round_number=1, base_aggressiveness=0.5,
                     total_raster_bytes=9_000_000, total_bytes=10_500_000,
-                    target_bytes=10_485_760, gap_ratio=0.0014),
+                    target_bytes=10_485_760, gap_ratio=0.0014, tier="hybrid"),
+    WholePageRasterPlan(dpi=150, quality=75, estimated_bytes=250_000),
+    PagePlan(page_number=2,
+             whole_page_plan=WholePageRasterPlan(dpi=96, quality=60,
+                                                 estimated_bytes=120_000)),
+    ConvergenceDiagnostics(tier_reached="full_raster",
+                           best_achievable_bytes=12_486_893,
+                           skip_page_count=3, skip_raster_bytes=4_000_000,
+                           skip_budget_ratio=0.76),
     PerPageFixedBytes(page_number=1, vector_bytes=40_000, text_bytes=3_000,
                       annotation_bytes=500),
     PreprocessResult(
@@ -234,9 +246,25 @@ def test_phase_error_is_raisable_and_dumps():
     assert err.phase == "decide" and err.code == "TARGET_TOO_SMALL"
     dumped = err.model_dump()  # 手册 Phase 11 用法：meta={"error": e.model_dump()}
     assert dumped == {"phase": "decide", "code": "TARGET_TOO_SMALL",
-                      "message": "fixed overhead exceeds target", "recoverable": False}
+                      "message": "fixed overhead exceeds target", "recoverable": False,
+                      "diagnostics": None}
     # 数据契约可独立 round-trip
     assert PhaseErrorData.model_validate(dumped) == err.data
+
+
+def test_phase_error_carries_convergence_diagnostics():
+    """Tier 系统（2026-07-04）：CONVERGENCE_FAILED 携带可行动诊断，
+    经 model_dump 进 Celery meta / API 响应体后可完整还原。"""
+    diag = ConvergenceDiagnostics(
+        tier_reached="full_raster", best_achievable_bytes=12_486_893,
+        skip_page_count=3, skip_raster_bytes=4_000_000, skip_budget_ratio=0.76,
+    )
+    err = PhaseError(phase="orchestrator", code="CONVERGENCE_FAILED",
+                     message="已尝试三种压缩策略仍无法达到 5.0MB", diagnostics=diag)
+    dumped = err.model_dump()
+    assert dumped["diagnostics"]["tier_reached"] == "full_raster"
+    restored = PhaseErrorData.model_validate(dumped)
+    assert restored.diagnostics == diag
 
 
 # ---------------------------------------------------------------- 修订字段（2026-07-04 四补丁）
@@ -264,6 +292,86 @@ def test_gap_ratio_allows_negative():
                            total_raster_bytes=50, total_bytes=80,
                            target_bytes=100, gap_ratio=-0.2)  # 压过头（浪费）合法
     assert step.gap_ratio == -0.2
+
+
+# ---------------------------------------------------------------- Tier 系统（2026-07-04）
+
+WPP = WholePageRasterPlan(dpi=150, quality=75, estimated_bytes=250_000)
+
+
+def test_whole_page_plan_excludes_raster_plans():
+    """契约层强约束 ①：whole_page_plan 置位时 raster_plans 必须为空。"""
+    with pytest.raises(ValidationError, match="whole_page_plan"):
+        PagePlan(page_number=1, whole_page_plan=WPP,
+                 raster_plans=[RasterPlan(**_raster_plan_kwargs())])
+
+
+def test_whole_page_plan_excludes_vector_plans():
+    """契约层强约束 ①：whole_page_plan 置位时 vector_plans 必须为空。"""
+    with pytest.raises(ValidationError, match="whole_page_plan"):
+        PagePlan(page_number=1, whole_page_plan=WPP,
+                 vector_plans=[VectorPlan(path_group_index=0, area_ratio=0.5,
+                                          original_bytes=1000, strategy="keep")])
+
+
+def test_skip_page_rejects_whole_page_plan():
+    """契约层强约束 ②：skip 页在任何 Tier 下不被触碰（铁律 4 的契约层落点）。"""
+    with pytest.raises(ValidationError, match="skip"):
+        PagePlan(page_number=1, skip=True, whole_page_plan=WPP)
+
+
+def test_whole_page_plan_alone_is_valid():
+    pp = PagePlan(page_number=1, whole_page_plan=WPP)
+    assert pp.whole_page_plan == WPP
+    assert pp.raster_plans == [] and pp.vector_plans == []
+
+
+def test_tier_ordering_contract():
+    """CompressionTier 顺序契约（用户补强 2026-07-04）：顺序即降级方向，
+    索引可比较；COMPRESSION_TIERS 与 Literal 同源同序。"""
+    from typing import get_args
+
+    assert COMPRESSION_TIERS == get_args(CompressionTier)  # 常量与 Literal 同步
+    assert COMPRESSION_TIERS.index("in_place") < COMPRESSION_TIERS.index("hybrid")
+    assert COMPRESSION_TIERS.index("hybrid") < COMPRESSION_TIERS.index("full_raster")
+    # "是否已至最深 Tier"的自然写法（未来代码按此模式，不做字符串比较）
+    assert COMPRESSION_TIERS.index("full_raster") == len(COMPRESSION_TIERS) - 1
+
+
+def test_tier_fields_reject_unknown_values():
+    with pytest.raises(ValidationError):
+        CompressionPlan(raster_budget=1, round_number=1,
+                        base_aggressiveness=0.5, tier="tier1")  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        CompressionResult(total_raster_bytes=0, round_number=1,
+                          base_aggressiveness=0.5, tier_used="extreme")  # type: ignore[arg-type]
+
+
+def test_backward_compat_old_payloads_without_tier_fields():
+    """向后兼容：Phase 8-10 既有序列化物（无任何 Tier 字段的旧 dict）
+    model_validate 成功，且新字段按默认值填充。"""
+    old_plan = {"raster_budget": 8_000_000, "pages": [
+        {"page_number": 1, "skip": False, "raster_plans": [], "vector_plans": []}
+    ], "round_number": 1, "base_aggressiveness": 0.5}
+    plan = CompressionPlan.model_validate(old_plan)
+    assert plan.tier == "in_place"
+    assert plan.pages[0].whole_page_plan is None
+
+    old_result = {"total_raster_bytes": 100, "per_image_results": [],
+                  "round_number": 1, "base_aggressiveness": 0.5}
+    result = CompressionResult.model_validate(old_result)
+    assert result.tier_used == "in_place"
+
+    old_step = {"round_number": 1, "base_aggressiveness": 0.5,
+                "total_raster_bytes": 100, "total_bytes": 150,
+                "target_bytes": 140, "gap_ratio": 0.07}
+    step = ConvergenceStep.model_validate(old_step)
+    assert step.tier == "in_place"
+
+    old_error = {"phase": "split", "code": "INVALID_PDF",
+                 "message": "not a pdf", "recoverable": False}
+    err = PhaseErrorData.model_validate(old_error)
+    assert err.diagnostics is None
 
 
 # ---------------------------------------------------------------- 跨 Phase 装配
