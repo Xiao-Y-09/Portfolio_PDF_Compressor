@@ -3,7 +3,7 @@
 > **用途**：新对话恢复上下文的唯一入口。配合 CLAUDE.md（宪法/铁律/工作规则）+
 > docs/ 三份真源文档使用，无需回看历史验收报告。
 > **维护规则**：每个 Phase 验收通过后更新本文件（状态节 + Phase 概览行）。
-> 最后更新：2026-07-04（Phase 11 完成，待用户验收，见 §9）。
+> 最后更新：2026-07-05（Phase 11 收官，见 §9；下一步 Phase 12 REST API）。
 
 ---
 
@@ -23,9 +23,9 @@
 | 9 | 压缩执行 compress.py（单轮，共享 data_ref 去重） | `b4149ac` |
 | 10 | PDF 重组 assemble.py（原地手术主干，架构决策 A） | `193045d` |
 | 10.5 | 视觉质量校准 + 架构决策 A2（base+SMask 原地保留取代 RGBA PNG 合并） | `9fcd58d` |
-| 11 | 任务编排 orchestrator.py + queue/tasks.py（收敛循环 + Celery + review 断点，**待验收**，见 §9） | WIP |
+| 11 | 任务编排（Tier 分级降级状态机 + Celery + review 断点 + 估算体系三段修复） | `6dbbe22` |
 
-远程：https://github.com/Xiao-Y-09/Portfolio_PDF_Compressor （main，已推送至 `9fcd58d`；Phase 11 待验收后 squash push）
+远程：https://github.com/Xiao-Y-09/Portfolio_PDF_Compressor （main，已推送至 `6dbbe22`）
 
 ## 2. 关键架构决策记录（只列结论 + 出处，不复述）
 
@@ -201,65 +201,62 @@ quality calibration (A2 base+SMask)」并 push → ③Phase 11 见 §9。
 - V1 保真近似（目视预期）：层序固定 位图→矢量→文字；文字统一黑色+基线近似；
   书签压平一级；rasterize 区域含层叠内容；form_field/comment 不重建
 
-## 9. Phase 11 状态：✅ 完成，待用户验收（2026-07-04）
+## 9. Phase 11 状态：✅ 完成并收官（2026-07-05，正式 commit `6dbbe22` 已 push）
 
-**产出**：
-- `backend/app/pipeline/orchestrator.py`（新）：`run_until_classify`（Phase A→B→C）+
-  `resume_after_review`（Phase D0→收敛循环→F）+ `SessionData`（工作区内部工件，非契约）+
-  `save_session`/`load_session`/`workspace_path`/`cleanup_workspace`/
-  `cleanup_stale_workspaces`。不导入 celery/redis，可在无 Celery 环境下直接单元测试。
-- `backend/app/queue/tasks.py`（替换 stub）：`compress_pdf_task`（AWAITING_REVIEW 断点）+
-  `resume_compression_task`（SUCCESS/FAILURE 终结）。Redis session 指针
-  `session:{task_id}` → `{tmp_workspace}`，TTL=`settings.session.review_session_ttl`；
-  工作区目录名即 task_id，无需额外映射表。
-- `backend/app/main.py`：定时清理循环追加 `cleanup_stale_workspaces()`（§4.4 超时策略，
-  与 storage.cleanup_expired 同一防御性设计——按文件 mtime 判断，不依赖 Redis）。
-- 文档：《系统架构设计.md》§5.1 错误码表新增 `SESSION_EXPIRED`。
+**范围**（12 个 WIP squash）：编排层（orchestrator + tasks 替换 stub）+ Tier 分级
+压缩系统（产品决策）+ 估算体系三段修复 + 手册"实施期架构演进"章节。
+目视验收结论：**质量能上线**。全量 204 passed + 1 skipped + 1 xfailed。
 
-**收敛循环落地**（《压缩决策引擎.md》§8，铁律 7）：gap_ratio ∈ [-tolerance,0] 达标 /
-(0, tolerance/2] 微超标接受 / 5 轮耗尽后 gap_ratio>0 → `CONVERGENCE_FAILED`
-（phase=orchestrator，recoverable=false）、gap_ratio≤0 接受（宁可小一点也不超标）。
-`ConvergenceStep` 由 orchestrator（而非 Phase 9）在每轮 execute_compression 后追加进
-`ctx.convergence_history`——契约文档标注的"Producer=Phase 9"是设计期措辞，Phase 9
-签名本身缺 target_bytes/fixed_bytes 无法独立算出 gap_ratio，orchestrator 是唯一同时
-掌握全部输入的位置；不算契约违反（字段/语义不变，只是产出时机在编排层）。
+**架构一览**：
+- orchestrator.py：run_until_classify（A→B→C，AWAITING_REVIEW 断点）→
+  resume_after_review（D0 一次 → Tier 降级状态机）；工作区/会话生命周期 +
+  30 分钟过期扫描接入 main.py 定时清理
+- Tier 状态机：in_place → hybrid（decide.select_whole_pages 纯函数贪心选页，
+  保留成本按原地真实语义）→ full_raster（tier3 独立 floor 72/30/150）；
+  review 只断一次，降级事后告知（tier_used/warning）；耗尽才
+  CONVERGENCE_FAILED + ConvergenceDiagnostics（可行动文案）
+- 整页光栅化原语：渲染归 compress、替换归 assemble（先 insert 后清空，失败原子）
+- 估算三段修复：①Tier 边界真实 assemble 判定（裁决 1）②环内基准
+  target−plan.raster_budget（"用错字段"修复）③JPEG bpp 实测标定
+  0.04/0.12→0.015/0.105（scripts/calibrate_jpeg_bpp.py，764 点，工作区间偏差 <20%）
 
-**测试**：`test_orchestrator.py`（11 用例，不涉及 Celery/Redis：会话存取往返、
-收敛三种结局、skip override 生效、工作区清理）+ `test_tasks.py`（6 用例，Celery
-eager 模式：完整链路 upload→AWAITING_REVIEW→resume→SUCCESS、进度阶段断言、review
-修改生效、session 不存在/超时、CONVERGENCE_FAILED 仍触发清理、split 失败清理）。
-全量回归 168 passed + 1 skipped + 1 xfailed（含 Phase 10.5 遗留的 assemble_rebuild
-xfail）；附录 A 五条铁律 grep 复核全空集。
+**6 场景验收（三轮对比，最终产物 preview_output/tier_final_*.pdf）**：
 
-**手动验证**（真实 Celery worker + Redis broker，非 eager，模拟未来 Phase 12 会做的
-事）：本机启动 `celery -A app.queue.celery_app worker --pool=solo`（Windows 不支持
-prefork），用独立 storage tmp_dir + Redis db14 隔离，`compress_pdf_task.delay()` →
-`AWAITING_REVIEW` → `resume_compression_task.delay()` → `SUCCESS`，下载产物有效
-（2 页，533878 字节）。验证完成后已停止 worker、清空 db14、删除临时目录。
+| 场景 | 双 bug 首轮 | 基准修复后 | 标定后（最终） | tier_used |
+|------|------|------|------|------|
+| p1@5MB | 3.12（-40.6%） | 3.12（-40.6%） | **4.27（-18.5%）** | full_raster |
+| p1@10MB | 6.08（-42.0%） | 6.08（-42.0%） | **8.79（-16.2%）** | full_raster |
+| p2@5MB | 3.46（-34.1%） | 3.46（-34.1%） | **4.80（-8.4%）✅** | full_raster |
+| p2@10MB | 6.50（-38.0%） | 6.50（-38.0%） | **10.36（-1.2%）✅** | full_raster |
+| p3@5MB | 2.75（-47.6%） | 3.19（-39.1%） | **4.77（-9.0%）✅** | full_raster |
+| p3@10MB | 6.86（-34.6%） | 6.24（-40.5%） | **10.56（+0.7%）✅** | full_raster |
 
-**Producer-Consumer 审计**：
-- `ConvergenceStep`/`ctx.convergence_history`：曾是"凭空字段"（Phase 8/9 定义时无
-  Producer），本 Phase 补齐 Producer（orchestrator），Consumer 目前是测试断言 +
-  日志；Phase 13 收敛性能统计、Phase 14 前端图表待其消费——非本 Phase 断链。
-- 发现并修复 2 处自查问题（未进最终报告前已改）：① Redis session 载荷曾多存一个
-  从未被读取的 `file_id` 字段（孤儿字段），已删除，`tmp_workspace` 足够定位到
-  `session_data.ctx.file_id`；② `tasks.py` 的 Redis 客户端曾用模块级单例缓存，
-  与 `get_settings()` 在测试中可被 `cache_clear()` 重新配置（切换 db）的事实冲突——
-  单例会绑定到过期连接串；改为每次调用现建（redis-py 连接本身是惰性的，无实质开销）。
-- `modified_classified`（review 修改后的分类）：Consumer 是 `decide_compression` 的
-  `classified` 形参，但 Phase 8 的 decide.py 内部当前并不读取该参数（page_type 尚未
-  驱动决策，是 Phase 8 既有特征非本 Phase 引入）——接口满足、语义未来待用，非断链。
-- `on_progress` 阶段串（split/extract/classify/preprocess/converge/assemble）与
-  《系统架构设计.md》§3.4 的百分比完全对齐，测试已断言；终端 Consumer（前端进度条）
-  要等 Phase 12 REST 层暴露 `GET /api/v1/tasks/:id` 才真正落地——不影响本 Phase 验收。
+零超标（铁律 7 全程成立）；p2@5MB 从硬性 TARGET_TOO_SMALL 变为达标交付。
+hybrid 结论：在 p1/p2@10MB 上物理上限 +17~25%（Tier 2 标准 floor + 未选页保留
+内容决定），降级判断正确——不是调优问题。
 
-**已知限制/前瞻风险**：
-- Phase 12（REST API）未建，"手册验证：用 curl 触发完整流程"改为直接 `.delay()` 走
-  真实 worker+broker 验证（见上）；curl 端到端验证留给 Phase 12 完成后补做。
-- decide.py 尚不消费 `classified.page_type`（Phase 8 遗留特征，非阻塞）。
-- R9（p2 极端矢量页原地整页光栅化增强）仍未处理，收敛环本身对矢量页无能为力
-  （assemble.py 目前不落地 vector_plans，见 8a 节）——真实作品集在 Phase 13
-  端到端测试时需重新评估是否阻塞。
+**风险台账更新**：R7（估算系数）✅ 关闭（实测标定；PNG 系数为死路径一并关闭）；
+R9（原地矢量缺口）✅ 由 Tier 2 整页光栅化补上；R10（rebuild 真透明退化）不变，
+xfail 在案；R4（固定开销 ±10%）遗留 Phase 13；R5（裸 CFF）、R6（git 身份）不变。
 
-**待完成（按序）**：①用户验收本报告 → ②squash 为正式 Phase 11 commit 并 push →
-③开始 Phase 12（REST API 层）。
+**上线后优化清单（不阻塞 Phase 12，按价值排序）**：
+1. hybrid 可用性：两个 10MB 场景 hybrid 上限在带外——可探索调低 tier2_budget_margin
+   多选页、或 Tier 2 允许 dpi 降至 120（需目视裁决），让更多任务停在文字保留档
+2. q≥95 估算非线性（PIL 色度子采样阶跃，低估 38-41%，方向安全）——Phase 13 可做
+   分段模型或压低实际使用的 quality_ceiling 到 92
+3. in_place/hybrid 层 est-real 残差（floor 用 planned 成本 vs 原地保留 original）——
+   烧轮次不伤正确性；Phase 13 与 R4 一起校准
+4. 元素级 bpp 比整页高 20-30%（单一系数折中）——如需更准可分上下文 config 键
+5. 多 Tier 下 progress 50-90% 带被复用（前端观感）——Phase 14 议题
+6. tier_acceptance.py 扩 15/20MB 档进例行回归
+
+**Phase 12（REST API 层）入口条件**：
+
+| 需要 | 来源 | 状态 |
+|------|------|------|
+| compress_pdf_task / resume_compression_task（AWAITING_REVIEW/SUCCESS 载荷含 tier_used/warning） | Phase 11 tasks.py | ✅ |
+| PhaseError.model_dump()（含 diagnostics）进错误响应体 | 契约层 | ✅ |
+| storage.save_upload/get_path/delete + cleanup_expired 定时任务 | Phase 2 | ✅ |
+| config api 段（max_upload_mb=500 / cors_origins） | Phase 2 config | ✅ |
+| main.py lifespan（清理循环）可挂路由 | Phase 2/11 | ✅ |
+| 手册 Phase 12 规格（upload/compress/tasks/resume/download/health + CORS + 错误中间件 + test_api） | 手册 §Phase 12 | ✅ 在案 |
