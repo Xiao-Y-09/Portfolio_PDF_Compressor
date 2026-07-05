@@ -199,6 +199,24 @@ async def test_failure_state_carries_phase_error_body(client, tmp_path):
     assert status["meta"]["error"]["phase"] == "split"
 
 
+async def test_review_thumbnail_available_during_session(client, tmp_path):
+    """Phase 14 倒逼的追加路由：AWAITING_REVIEW 期间可取页面缩略图 PNG；
+    会话不存在 → 404；页号越界 → 404。"""
+    file_id = await _upload(client, tmp_path)
+    resp = await client.post("/api/v1/compress", json={
+        "file_id": file_id, "target_size_mb": 10.0, "compression_target": "screen"})
+    task_id = resp.json()["task_id"]
+    assert (await client.get(f"/api/v1/tasks/{task_id}")).json()["state"] == "AWAITING_REVIEW"
+
+    resp = await client.get(f"/api/v1/tasks/{task_id}/pages/1/thumbnail")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.content.startswith(b"\x89PNG")
+
+    assert (await client.get(f"/api/v1/tasks/{task_id}/pages/99/thumbnail")).status_code == 404
+    assert (await client.get(f"/api/v1/tasks/{uuid.uuid4()}/pages/1/thumbnail")).status_code == 404
+
+
 # ---------------------------------------------------------------- health
 
 async def test_health_reports_probes(client):

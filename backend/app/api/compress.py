@@ -14,16 +14,19 @@ PhaseErrorData（含 CONVERGENCE_FAILED 的 diagnostics）。
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict, List
 
 from celery.result import AsyncResult
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.contracts import CompressionTarget, PageOverride, PhaseError
+from app.pipeline.orchestrator import render_page_thumbnail
 from app.queue.celery_app import celery_app
-from app.queue.tasks import compress_pdf_task, resume_compression_task
+from app.queue.tasks import _redis, _session_key, compress_pdf_task, resume_compression_task
 from app.storage import get_storage
 
 logger = logging.getLogger("app.api.compress")
@@ -85,6 +88,25 @@ def task_status(task_id: str) -> dict:
         info = result.info if isinstance(result.info, dict) else {}
         return {"state": "PROGRESS", "meta": info}
     return {"state": "PENDING", "meta": {}}
+
+
+@router.get("/tasks/{task_id}/pages/{page_number}/thumbnail")
+def page_thumbnail(task_id: str, page_number: int) -> Response:
+    """review 界面缩略图（Phase 14 规格倒逼的追加路由，2026-07-05）。
+
+    仅在 AWAITING_REVIEW 会话存活期间可用（session 指针在 → 工作区在）；
+    会话过期/页号越界 → 404。渲染逻辑在 orchestrator（api 层不碰 pymupdf）。
+    """
+    raw = _redis().get(_session_key(task_id))
+    if raw is None:
+        raise HTTPException(status_code=404, detail="session not found or expired")
+    workspace = json.loads(raw)["tmp_workspace"]
+    try:
+        png = render_page_thumbnail(workspace, page_number)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return Response(content=png, media_type="image/png",
+                    headers={"Cache-Control": "private, max-age=1800"})
 
 
 @router.post("/tasks/{task_id}/resume")

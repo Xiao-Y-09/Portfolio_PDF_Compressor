@@ -30,3 +30,8 @@ deploy/ec2/certs/
 .idea/
 .DS_Store
 Thumbs.db
+
+# ---- Playwright ----
+frontend/test-results/
+frontend/playwright-report/
+frontend/e2e/.sample.pdf

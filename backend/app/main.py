@@ -73,6 +73,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def log_client_session(request, call_next):
+    """client session token 关联日志（Phase 14 用户指定，2026-07-05）：
+    前端为同一浏览器会话生成 UUID，经 X-Client-Session 头随每个请求发送；
+    后端简单信任、仅日志关联（无鉴权语义——暂无账户系统）。"""
+    token = request.headers.get("x-client-session")
+    response = await call_next(request)
+    if token:
+        logger.info("client-session=%s %s %s -> %d",
+                    token[:8], request.method, request.url.path, response.status_code)
+    return response
+
 # 统一错误处理（手册 Phase 12 第六项）：PhaseError → 4xx/5xx；未捕获 → 500 不泄露
 register_error_handlers(app)
 

@@ -87,6 +87,29 @@ def _actual_size(path: str) -> int:
     return Path(path).stat().st_size
 
 
+THUMBNAIL_DPI = 40  # review 缩略图渲染 DPI（低清即可，结构常量非压缩参数）
+
+
+def render_page_thumbnail(tmp_workspace: str, page_number: int) -> bytes:
+    """review 界面页面缩略图（Phase 14 规格倒逼的 Phase 12 追加路由之渲染侧，
+    2026-07-05）。读 AWAITING_REVIEW 期间存活的工作区 source.pdf，渲染单页 PNG。
+    页号越界/文件缺失 → ValueError（API 层转 404）。"""
+    import pymupdf
+
+    source = Path(tmp_workspace) / "source.pdf"
+    if not source.is_file():
+        raise ValueError(f"source.pdf missing under {tmp_workspace}")
+    doc = pymupdf.open(str(source))
+    try:
+        if not 1 <= page_number <= doc.page_count:
+            raise ValueError(f"page {page_number} out of range 1..{doc.page_count}")
+        zoom = THUMBNAIL_DPI / 72.0
+        pix = doc[page_number - 1].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+        return pix.tobytes("png")
+    finally:
+        doc.close()
+
+
 class SessionData(BaseModel):
     """review 断点会话状态（工作区内部工件，非契约，见模块 docstring）。"""
 
