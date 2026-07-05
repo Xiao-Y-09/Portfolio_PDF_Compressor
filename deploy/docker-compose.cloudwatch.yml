@@ -1,0 +1,26 @@
+# CloudWatch 日志叠加层（Phase 15 关注点 6）。前置：EC2 实例挂有含
+# CloudWatchLogsFullAccess（或最小 logs:CreateLogStream/PutLogEvents/
+# CreateLogGroup）权限的 IAM Role——awslogs 驱动直连，无需装 Agent。
+# 用法：docker compose -f docker-compose.yml -f docker-compose.cloudwatch.yml up -d
+services:
+  api:
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-ap-northeast-1}
+        awslogs-group: /pdfcompress/api
+        awslogs-create-group: "true"
+  celery_worker:
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-ap-northeast-1}
+        awslogs-group: /pdfcompress/worker
+        awslogs-create-group: "true"
+  nginx:
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-ap-northeast-1}
+        awslogs-group: /pdfcompress/nginx
+        awslogs-create-group: "true"

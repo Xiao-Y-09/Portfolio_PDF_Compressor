@@ -56,6 +56,10 @@ def compress_pdf_task(self, file_id: str, user_prefs_dict: dict) -> dict:
 
     def on_progress(stage: str, percent: float) -> None:
         self.update_state(state="PROGRESS", meta={"stage": stage, "percent": percent})
+        # stage-metric：CloudWatch 指标过滤器锚点（Phase 15，2026-07-05）——
+        # 相邻两条的时间差即阶段耗时，Logs Insights 可聚合
+        logger.info("stage-metric task=%s stage=%s percent=%.2f",
+                    task_id, stage, percent)
 
     try:
         classified, session_data = run_until_classify(file_id, user_prefs, ctx, on_progress)
@@ -85,6 +89,8 @@ def resume_compression_task(
     self, session_id: str, modified_classified: list, user_prefs_dict: dict
 ) -> dict:
     """用户 review 之后继续的任务：Phase D0 → 收敛循环 → Phase F → 归档下载。"""
+    import time as _time
+    _t0 = _time.time()
     raw = _redis().get(_session_key(session_id))
     if raw is None:
         raise PhaseError(
@@ -107,6 +113,12 @@ def resume_compression_task(
         # tier_used：被接受 Tier 即收敛轨迹最后一步所属层级（成功路径必有轨迹）
         history = session_data.ctx.convergence_history
         tier_used = history[-1].tier if history else "in_place"
+        # task-metrics：CloudWatch 业务指标锚点（Phase 15）——tier 分布/时长/轮数
+        logger.info(
+            "task-metrics session=%s tier_used=%s final_mb=%.2f rounds=%d elapsed_s=%.1f",
+            session_id, tier_used, os.path.getsize(output_path) / 1e6,
+            len(history), _time.time() - _t0,
+        )
         return {
             "status": "SUCCESS",
             "download_id": download_id,

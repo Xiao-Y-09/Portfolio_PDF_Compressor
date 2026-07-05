@@ -1,0 +1,95 @@
+# 生产编排（手册 Phase 15 第三项）。在 deploy/ 目录下执行：
+#   docker compose up -d --build
+# CloudWatch 日志（可选叠加）：
+#   docker compose -f docker-compose.yml -f docker-compose.cloudwatch.yml up -d
+#
+# 关键设计：
+# - api 与 celery_worker 共享 tmpdata volume（上传由 api 落盘、worker 读取；
+#   产物由 worker 落盘、api 提供下载——同一 STORAGE__TMP_DIR 是硬要求）
+# - api 端口只绑 127.0.0.1（公网入口唯一走 nginx SSL 终结）
+# - worker 副本数：t3.medium 保持 1（内存预算）；t3.large+ 可
+#   `docker compose up -d --scale celery_worker=2`（手册原建议 2 副本，
+#   按用户选定的 t3.medium 起步档下调，见 instance-config.md）
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    environment:
+      - REDIS__HOST=redis
+      - STORAGE__TMP_DIR=/data/tmp
+      - APP__APP_ENV=prod
+      - API__CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:3000"]}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - tmpdata:/data/tmp
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  celery_worker:
+    build:
+      context: ..
+      dockerfile: backend/celery.Dockerfile
+    environment:
+      - REDIS__HOST=redis
+      - STORAGE__TMP_DIR=/data/tmp
+      - APP__APP_ENV=prod
+    volumes:
+      - tmpdata:/data/tmp
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/active.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot-webroot:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # 证书签发/续签（profile 手动触发，不常驻）：
+  #   首签：docker compose run --rm certbot certonly --webroot -w /var/www/certbot \
+  #         -d api.pdf.xiao-projects.com --email you@example.com --agree-tos --no-eff-email
+  #   续签（cron，见 RUNBOOK §8）：docker compose run --rm certbot renew
+  certbot:
+    image: certbot/certbot
+    profiles: ["certs"]
+    volumes:
+      - certbot-webroot:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
+
+volumes:
+  redisdata:
+  tmpdata:
+  certbot-webroot:
+  letsencrypt:
