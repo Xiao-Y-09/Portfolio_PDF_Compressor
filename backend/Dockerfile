@@ -14,6 +14,12 @@ WORKDIR /app/backend
 COPY config.yaml /app/config.yaml
 COPY backend/app /app/backend/app
 # 临时工作区挂载点（compose 里 api 与 worker 共享同一 volume——上传/产物互通）
+RUN apt-get update && apt-get install -y \
+    fonts-liberation \
+    fonts-dejavu-core \
+    fontconfig \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /data/tmp
 ENV STORAGE__TMP_DIR=/data/tmp
 EXPOSE 8000
