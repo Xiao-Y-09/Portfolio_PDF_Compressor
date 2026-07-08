@@ -33,23 +33,35 @@ export function normalizeError(err: unknown): UiError {
   if (axios.isAxiosError(err)) {
     const ax = err as AxiosError<{ error?: PhaseErrorData; detail?: string }>;
     if (ax.code === "ECONNABORTED")
-      return { kind: "timeout", message: "请求超时，请检查网络后重试。" };
+      return {
+        kind: "timeout",
+        message: "The request timed out. Check your connection and try again.",
+      };
     if (!ax.response)
-      return { kind: "network", message: "无法连接服务器，请稍后重试。" };
+      return {
+        kind: "network",
+        message: "Couldn't reach the server. Please try again shortly.",
+      };
     const body = ax.response.data;
     if (body && typeof body === "object" && "error" in body && body.error) {
       const phase = body.error as PhaseErrorData;
       return { kind: "phase", message: phase.message, phase };
     }
     if (ax.response.status >= 500)
-      return { kind: "server", message: "服务暂时不可用，请稍后重试。" };
+      return {
+        kind: "server",
+        message: "The service is temporarily unavailable. Please try again shortly.",
+      };
     const detail =
       body && typeof body === "object" && "detail" in body
         ? String((body as { detail?: string }).detail)
-        : `请求失败（${ax.response.status}）`;
+        : `Request failed (${ax.response.status})`;
     return { kind: "client", message: detail };
   }
-  return { kind: "client", message: "发生未知错误，请重试。" };
+  return {
+    kind: "client",
+    message: "An unexpected error occurred. Please try again.",
+  };
 }
 
 export async function uploadPdf(

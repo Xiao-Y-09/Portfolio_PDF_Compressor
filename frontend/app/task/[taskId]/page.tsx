@@ -83,7 +83,8 @@ export default function TaskPage() {
     if (!sessionIdRef.current || !store.fileId) {
       setUiError({
         kind: "client",
-        message: "会话信息缺失（可能因页面刷新丢失），请重新上传。",
+        message:
+          "Session information is missing (it may have been lost on page refresh). Please upload the file again.",
       });
       return;
     }
@@ -135,7 +136,7 @@ export default function TaskPage() {
         <ErrorView
           error={{
             kind: "phase",
-            message: phase.message ?? "处理失败",
+            message: phase.message ?? "Processing failed",
             phase: phase.code ? phase : undefined,
           }}
         />

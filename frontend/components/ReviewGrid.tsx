@@ -14,10 +14,10 @@ import { useCompressorStore } from "@/lib/store";
 import type { PageType } from "@/lib/types";
 
 const TYPE_LABELS: Record<PageType, string> = {
-  photo_heavy: "照片为主",
-  text_heavy: "文字为主",
-  chart: "图表/线稿",
-  mixed: "混合",
+  photo_heavy: "Photo-heavy",
+  text_heavy: "Text-heavy",
+  chart: "Chart / line art",
+  mixed: "Mixed",
 };
 
 // complexity_score 高于此值 → "请确认"高亮（分类边界模糊，架构设计 §4.3）
@@ -43,18 +43,23 @@ export default function ReviewGrid({
   return (
     <div data-testid="review-view" className="space-y-6">
       <section className="space-y-1">
-        <h2 className="text-xl font-semibold">确认页面分类</h2>
+        <h2 className="text-xl font-semibold tracking-tight">
+          Confirm page classification
+        </h2>
         <p className="text-sm text-zinc-500">
-          分类影响每页的压缩策略。
+          Classification determines each page&apos;s compression strategy.
           {needConfirm > 0 && (
-            <span className="text-accent font-medium">
-            　有 {needConfirm} 页分类不确定，请重点确认。
+            <span className="font-medium text-accent">
+              {" "}
+              {needConfirm} page{needConfirm > 1 ? "s are" : " is"} uncertain —
+              please review {needConfirm > 1 ? "them" : "it"}.
             </span>
           )}
         </p>
         <p className="text-xs text-zinc-500">
-          提示：若目标大小无法达成，系统会逐级启用页面光栅化（文字变为图片）
-          以保证达标，完成时会明确告知。标记为“跳过”的页面永远不会被改动。
+          Note: if the target size can&apos;t be reached, we progressively
+          rasterize pages (text becomes an image) to hit it, and tell you clearly
+          when we do. Pages marked &ldquo;Skip&rdquo; are never touched.
         </p>
       </section>
 
@@ -78,7 +83,7 @@ export default function ReviewGrid({
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={thumbnailUrl(taskId, page.page_number)}
-                    alt={`第 ${page.page_number} 页`}
+                    alt={`Page ${page.page_number}`}
                     className="h-full w-full object-contain"
                     loading="lazy"
                     onError={() =>
@@ -87,28 +92,28 @@ export default function ReviewGrid({
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center text-xs text-zinc-400">
-                    预览不可用
+                    Preview unavailable
                   </div>
                 )}
                 {uncertain && (
-                  <span className="absolute left-1 top-1 rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium text-white">
-                    请确认
+                  <span className="absolute left-1 top-1 rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium text-accent-fg">
+                    Review
                   </span>
                 )}
                 {override === "skip" && (
                   <span className="absolute right-1 top-1 rounded bg-zinc-700 px-1.5 py-0.5 text-[10px] text-white">
-                    跳过
+                    Skip
                   </span>
                 )}
                 {override === "aggressive" && (
                   <span className="absolute right-1 top-1 rounded bg-red-600 px-1.5 py-0.5 text-[10px] text-white">
-                    激进
+                    Aggressive
                   </span>
                 )}
               </div>
 
               <div className="mb-2 text-xs font-medium">
-                第 {page.page_number} 页
+                Page {page.page_number}
               </div>
 
               <select
@@ -139,7 +144,7 @@ export default function ReviewGrid({
                         : "border-zinc-300 dark:border-zinc-600 hover:border-zinc-500"
                     }`}
                 >
-                  跳过
+                  Skip
                 </button>
                 <button
                   data-testid={`aggressive-toggle-${page.page_number}`}
@@ -152,7 +157,7 @@ export default function ReviewGrid({
                         : "border-zinc-300 dark:border-zinc-600 hover:border-red-400"
                     }`}
                 >
-                  激进
+                  Aggressive
                 </button>
               </div>
             </div>
@@ -165,9 +170,9 @@ export default function ReviewGrid({
           data-testid="resume-button"
           onClick={onResume}
           disabled={resuming}
-          className="rounded-lg bg-accent px-8 py-3 font-medium text-white transition hover:bg-accent-hover disabled:opacity-50"
+          className="rounded-lg bg-accent px-8 py-3 font-medium text-accent-fg transition hover:bg-accent-hover disabled:opacity-50"
         >
-          {resuming ? "正在启动…" : "确认并继续压缩"}
+          {resuming ? "Starting…" : "Confirm & continue"}
         </button>
       </div>
     </div>

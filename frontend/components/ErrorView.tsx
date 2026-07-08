@@ -10,13 +10,18 @@ import Link from "next/link";
 import type { PhaseErrorData, UiError } from "@/lib/types";
 
 const CODE_MESSAGES: Record<string, string> = {
-  INVALID_PDF: "文件无法识别为有效的 PDF，请检查文件是否损坏后重新上传。",
-  ENCRYPTED_PDF: "PDF 已加密，请先解除密码保护后重新上传。",
-  SESSION_EXPIRED: "确认会话已过期（超过 30 分钟未操作），请重新上传文件。",
-  TARGET_TOO_SMALL: "目标大小对这份文件来说过小。",
-  CONVERGENCE_FAILED: "已尝试全部压缩策略，仍无法达到目标大小。",
-  EXECUTION_FAILURE_RATE: "压缩过程中失败率过高，请重试；若持续失败请更换文件。",
-  ASSEMBLY_FAILED: "输出文件生成失败，请重试。",
+  INVALID_PDF:
+    "This file couldn't be recognized as a valid PDF. Check that it isn't corrupted and upload it again.",
+  ENCRYPTED_PDF:
+    "This PDF is password-protected. Remove the protection and upload it again.",
+  SESSION_EXPIRED:
+    "Your review session expired (no activity for over 30 minutes). Please upload the file again.",
+  TARGET_TOO_SMALL: "The target size is too small for this file.",
+  CONVERGENCE_FAILED:
+    "We tried every compression strategy but still couldn't reach the target size.",
+  EXECUTION_FAILURE_RATE:
+    "Too many pages failed during compression. Please retry, or try a different file if it keeps failing.",
+  ASSEMBLY_FAILED: "The output file couldn't be generated. Please try again.",
 };
 
 function ActionableSuggestions({ error }: { error: PhaseErrorData }) {
@@ -29,15 +34,16 @@ function ActionableSuggestions({ error }: { error: PhaseErrorData }) {
     >
       {diag.skip_page_count > 0 && (
         <li>
-          您跳过了 <b>{diag.skip_page_count}</b> 页，占目标预算的{" "}
-          <b>{Math.round(diag.skip_budget_ratio * 100)}%</b>
-          ——减少跳过页数可显著释放空间。
+          You skipped <b>{diag.skip_page_count}</b> page
+          {diag.skip_page_count > 1 ? "s" : ""}, taking up{" "}
+          <b>{Math.round(diag.skip_budget_ratio * 100)}%</b> of the target budget
+          — skipping fewer pages frees up significant space.
         </li>
       )}
       <li>
-        当前预估最优可达{" "}
-        <b>{(diag.best_achievable_bytes / 1e6).toFixed(1)} MB</b>
-        ——选择不小于该值的目标可一次成功。
+        The best achievable size is currently about{" "}
+        <b>{(diag.best_achievable_bytes / 1e6).toFixed(1)} MB</b> — choosing a
+        target no smaller than that will succeed on the first try.
       </li>
     </ul>
   );
@@ -46,7 +52,7 @@ function ActionableSuggestions({ error }: { error: PhaseErrorData }) {
 export default function ErrorView({ error }: { error: UiError }) {
   const phase = error.phase;
   const headline = phase
-    ? CODE_MESSAGES[phase.code] ?? "处理失败，请重试。"
+    ? CODE_MESSAGES[phase.code] ?? "Something went wrong. Please try again."
     : error.message;
 
   return (
@@ -64,9 +70,9 @@ export default function ErrorView({ error }: { error: UiError }) {
                 <Link
                   data-testid="retry-larger-target"
                   href="/"
-                  className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-hover"
+                  className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg hover:bg-accent-hover"
                 >
-                  选择更大目标重试
+                  Retry with a larger target
                 </Link>
               </div>
             </div>
@@ -75,9 +81,9 @@ export default function ErrorView({ error }: { error: UiError }) {
           !["CONVERGENCE_FAILED", "TARGET_TOO_SMALL"].includes(phase.code)) && (
           <Link
             href="/"
-            className="mt-4 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-hover"
+            className="mt-4 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg hover:bg-accent-hover"
           >
-            返回重新上传
+            Back to upload
           </Link>
         )}
       </div>

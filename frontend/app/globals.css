@@ -2,7 +2,22 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 主色调深灰 + 强调色橙（手册 Phase 14 样式规格），深色模式随系统 */
+/* Minimalist black & white palette. `--accent` is the "ink": near-black on a
+   white page, near-white on a black page. Follows the system color scheme. */
+:root {
+  --accent: #111111;
+  --accent-hover: #000000;
+  --accent-fg: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: #fafafa;
+    --accent-hover: #ffffff;
+    --accent-fg: #111111;
+  }
+}
+
 body {
-  @apply bg-zinc-100 text-zinc-800 dark:bg-zinc-900 dark:text-zinc-100;
+  @apply bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100;
 }

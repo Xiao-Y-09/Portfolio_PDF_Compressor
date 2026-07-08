@@ -8,17 +8,17 @@
 import type { ProgressMeta } from "@/lib/types";
 
 const STAGE_LABELS: Record<string, string> = {
-  split: "正在拆页…",
-  extract: "正在提取页面元素…",
-  classify: "正在分类页面…",
-  preprocess: "正在预处理（字体子集化）…",
-  converge: "正在压缩收敛…",
-  assemble: "正在重组输出…",
+  split: "Splitting pages…",
+  extract: "Extracting page elements…",
+  classify: "Classifying pages…",
+  preprocess: "Preprocessing (font subsetting)…",
+  converge: "Compressing and converging…",
+  assemble: "Rebuilding the output…",
 };
 
 export default function ProgressView({ meta }: { meta: ProgressMeta }) {
   const percent = Math.round((meta.percent ?? 0.02) * 100);
-  const label = STAGE_LABELS[meta.stage ?? ""] ?? "正在处理…";
+  const label = STAGE_LABELS[meta.stage ?? ""] ?? "Processing…";
 
   return (
     <div data-testid="progress-view" className="mx-auto max-w-xl space-y-4 py-16">
@@ -33,7 +33,8 @@ export default function ProgressView({ meta }: { meta: ProgressMeta }) {
         />
       </div>
       <p className="text-xs text-zinc-500">
-        大文件可能需要几分钟，页面会自动刷新进度。
+        Large files can take a few minutes — this page refreshes progress
+        automatically.
       </p>
     </div>
   );

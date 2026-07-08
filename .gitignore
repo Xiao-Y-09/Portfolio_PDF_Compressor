@@ -18,6 +18,7 @@ htmlcov/
 # ---- Node / Next.js ----
 .next/
 out/
+*.tsbuildinfo
 
 # ---- 环境与密钥（附录 A 安全检查要求）----
 .env
