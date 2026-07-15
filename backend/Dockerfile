@@ -13,13 +13,11 @@ COPY --from=builder /install /usr/local
 WORKDIR /app/backend
 COPY config.yaml /app/config.yaml
 COPY backend/app /app/backend/app
+# 不装系统字体包：pymupdf 静态编译 MuPDF（内置 base14 + CJK 回退字体），
+# 渲染从不查询 fontconfig/系统字体——实测（2026-07-15）容器有无字体包渲染
+# 逐像素一致。"压缩后文字消失"真因在字体子集化链路，见 pipeline/extract.py
+# _extract_fonts 与 preprocess.py _subset_font 的修复注释。
 # 临时工作区挂载点（compose 里 api 与 worker 共享同一 volume——上传/产物互通）
-RUN apt-get update && apt-get install -y \
-    fonts-liberation \
-    fonts-dejavu-core \
-    fontconfig \
-    --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /data/tmp
 ENV STORAGE__TMP_DIR=/data/tmp
 EXPOSE 8000

@@ -47,15 +47,19 @@ def real_preprocessed(tmp_path_factory):
 
 
 def test_subsetting_reduces_font_bytes_on_real_sample(real_preprocessed):
-    """实测锚点（2026-07-04）：TrueType 字体子集化显著缩减；全体不升。"""
+    """实测锚点（2026-07-15 修订）：仅简单 TrueType 参与子集化；全体不升。
+
+    锚点 ≥20 → ≥10：字体消失 bug 修复后 Type0（CID 寻址）字体不再参与
+    子集化（Unicode 闭包不可靠，实测清空字形只剩 .notdef），portfolio_2
+    的 24 个字体中 Type0 出局，余 12 个产出 SubsetResult。"""
     subs = real_preprocessed["result"].subsetted_fonts
-    assert len(subs) >= 20  # 24 个嵌入字体，至少 20 个产出 SubsetResult
+    assert len(subs) >= 10
 
     total_original = sum(s.original_bytes for s in subs)
     total_subsetted = sum(s.subsetted_bytes for s in subs)
-    assert total_subsetted < total_original  # 总量严格缩减（实测 -55.6%）
-    # 至少一个字体缩减 >70%（实测 Helvetica-Bold -87.5%）
-    assert any(s.subsetted_bytes < s.original_bytes * 0.3 for s in subs)
+    assert total_subsetted < total_original  # 总量严格缩减
+    # 至少一个字体缩减 >50%（实测 Roboto-BoldItalic 39715→17484，-56%）
+    assert any(s.subsetted_bytes < s.original_bytes * 0.5 for s in subs)
     # 只降不升：任何字体不得变大
     for s in subs:
         assert s.subsetted_bytes <= s.original_bytes
@@ -72,7 +76,7 @@ def test_subsetted_files_exist(real_preprocessed):
 
 
 def test_failed_fonts_keep_original_ref(real_preprocessed):
-    """容错分支（实测触发 8 个：6 缺 cmap + 2 裸 CFF）：保留原字体引用。"""
+    """容错分支（PUA 门禁 / cmap 门禁 / 裸 CFF 解析失败）：保留原字体引用。"""
     kept = [s for s in real_preprocessed["result"].subsetted_fonts
             if s.subsetted_bytes == s.original_bytes]
     assert kept, "实测样本应存在子集化失败/不赚的字体"
@@ -130,6 +134,25 @@ def test_corrupt_font_falls_back_to_original(tmp_path):
     ctx.resolve_ref("fonts").mkdir(parents=True)
     ctx.resolve_ref(ref).write_bytes(b"this is not a font at all")
     fonts = {"Broken": FontUsage(font_name="Broken", data_ref=ref, chars_used={"a"})}
+    result = preprocess([], fonts, {}, PREFS, ctx)
+    assert len(result.subsetted_fonts) == 1
+    s = result.subsetted_fonts[0]
+    assert s.subsetted_bytes == s.original_bytes  # 保留原字体
+    assert s.subsetted_data_ref == ref
+
+
+def test_cmap_uncovered_chars_keep_original(tmp_path):
+    """cmap 覆盖门禁（2026-07-15 字体消失 bug 修复）：已用字符不被 cmap 全覆盖
+    → 放弃子集化保原件（否则 retain_gids 清空未命中字形轮廓，文字隐形）。"""
+    import pymupdf
+
+    ctx = _new_ctx(tmp_path)
+    ref = "fonts/font_Helv.ttf"
+    ctx.resolve_ref("fonts").mkdir(parents=True)
+    ctx.resolve_ref(ref).write_bytes(pymupdf.Font("helv").buffer)
+    # "中" 不在 Helvetica（Nimbus Sans）的 cmap 里
+    fonts = {"Helv": FontUsage(font_name="Helv", data_ref=ref,
+                               chars_used={"a", "中"})}
     result = preprocess([], fonts, {}, PREFS, ctx)
     assert len(result.subsetted_fonts) == 1
     s = result.subsetted_fonts[0]

@@ -39,8 +39,12 @@ from app.contracts import (
     PipelineContext,
     PreprocessResult,
 )
+import io
+
+from fontTools.ttLib import TTFont
+
 from app.pipeline.compress import WHOLE_PAGE_REF
-from app.pipeline.extract import XREF_MAP_REF, _font_key
+from app.pipeline.extract import XREF_MAP_REF
 
 logger = logging.getLogger("app.pipeline.assemble")
 
@@ -239,30 +243,67 @@ def _replace_fonts(doc, preprocess: PreprocessResult, ctx) -> int:
         except Exception:
             continue
         for entry in font_list:
-            font_xref, basefont = entry[0], entry[3]
+            font_xref, ftype, basefont = entry[0], entry[2], entry[3]
             if font_xref in seen_font_xrefs:
                 continue
             seen_font_xrefs.add(font_xref)
-            sub = subs.get(_font_key(basefont))
+            # 完整 basefont 匹配（2026-07-15 字体消失 bug 修复）：同族不同子集
+            # （ABCDEF+X vs GHIJKL+X）GID 布局互不兼容，剥前缀匹配会拿 A 的
+            # 子集字节替换 B 的 FontFile2 → 文字隐形/乱码
+            sub = subs.get((basefont or "").strip())
             if sub is None:
+                continue
+            if ftype == "Type0":
+                logger.warning("font %s: Type0 (CID) xref matched a subset — "
+                               "skipping (GID addressing, replacement unsafe)",
+                               sub.font_name)
                 continue
             ff_xref = _find_fontfile2(doc, font_xref)
             if ff_xref is None:
                 continue
             try:
                 new_bytes = ctx.resolve_ref(sub.subsetted_data_ref).read_bytes()
-                old_len = len(doc.xref_stream(ff_xref) or b"")
-                if old_len and len(new_bytes) >= old_len:
+                old_bytes = doc.xref_stream(ff_xref) or b""
+                if old_bytes and len(new_bytes) >= len(old_bytes):
                     continue  # 只降不升
+                if not _compatible_font_program(old_bytes, new_bytes):
+                    logger.warning("font %s: subset incompatible with resident "
+                                   "FontFile2 (different font program?), "
+                                   "skipping replacement", sub.font_name)
+                    continue
                 doc.update_stream(ff_xref, new_bytes)
                 doc.xref_set_key(ff_xref, "Length1", str(len(new_bytes)))
                 replaced += 1
                 logger.info("font %s: FontFile2 %d bytes -> %d",
-                            sub.font_name, old_len, len(new_bytes))
+                            sub.font_name, len(old_bytes), len(new_bytes))
             except Exception:
                 logger.warning("font %s: in-place replace failed, original kept",
                                sub.font_name, exc_info=True)
     return replaced
+
+
+def _compatible_font_program(old_bytes: bytes, new_bytes: bytes) -> bool:
+    """替换前最后防线：新字节必须是**同一字体程序**的子集。
+
+    实测（portfolio_1）同一 basefont 可对应多个 xref、多份不同字形程序
+    （生产者复用子集标签），按名匹配仍可能拿 A 程序的子集替换 B 程序 →
+    文字隐形。判据：
+    - 新 cmap 的每个 unicode→glyph 映射在旧 cmap 中同值（不同程序的
+      字形序号/名称布局不同，必被拒绝）；
+    - 字形总数只减不增（retain_gids 允许截断尾部未用字形）。
+    任何解析失败按不兼容处理（保守跳过）。"""
+    try:
+        old_tt = TTFont(io.BytesIO(old_bytes), lazy=True)
+        new_tt = TTFont(io.BytesIO(new_bytes), lazy=True)
+        if new_tt["maxp"].numGlyphs > old_tt["maxp"].numGlyphs:
+            return False
+        old_cmap = old_tt.getBestCmap() or {}
+        new_cmap = new_tt.getBestCmap() or {}
+        if not new_cmap:
+            return False
+        return all(old_cmap.get(cp) == g for cp, g in new_cmap.items())
+    except Exception:
+        return False
 
 
 def _find_fontfile2(doc, font_xref: int) -> Optional[int]:

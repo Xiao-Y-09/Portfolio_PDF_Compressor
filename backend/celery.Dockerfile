@@ -13,6 +13,9 @@ COPY --from=builder /install /usr/local
 WORKDIR /app/backend
 COPY config.yaml /app/config.yaml
 COPY backend/app /app/backend/app
+# 不装系统字体包：pymupdf 静态编译 MuPDF，get_pixmap 从不查询 fontconfig/
+# 系统字体（内置 base14 + CJK 回退），实测容器有无字体包渲染逐像素一致。
+# "压缩后文字消失"真因在字体子集化链路（见 backend/Dockerfile 同注释）。
 RUN mkdir -p /data/tmp
 ENV STORAGE__TMP_DIR=/data/tmp
 CMD ["python", "-m", "celery", "-A", "app.queue.celery_app", "worker", \

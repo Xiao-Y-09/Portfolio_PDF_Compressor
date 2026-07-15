@@ -105,8 +105,8 @@ def _subset_font(font: FontUsage, ctx: PipelineContext) -> Optional[SubsetResult
     - 只降不升：子集化结果比原文件还大 → 保留原字体
     """
     if font.data_ref is None:
-        logger.warning("font %s: data_ref=None (not embedded), skip subsetting",
-                       font.font_name)
+        logger.warning("font %s: data_ref=None (not embedded / CID-addressed), "
+                       "skip subsetting", font.font_name)
         return None
 
     src = ctx.resolve_ref(font.data_ref)
@@ -137,6 +137,29 @@ def _subset_font(font: FontUsage, ctx: PipelineContext) -> Optional[SubsetResult
 
     try:
         tt = TTFont(str(src))
+
+        # cmap 覆盖门禁（2026-07-15 字体消失 bug 修复）：子集化按 Unicode 文本
+        # 经字体 cmap 求字形闭包；cmap 缺失或覆盖不了全部已用字符时，闭包会漏掉
+        # 实际绘制的字形——retain_gids 把漏掉的字形轮廓**清空**（不是回退 .notdef），
+        # 对应文字直接隐形。此时放弃子集化、保留原字体（正确性优先）。
+        try:
+            best_cmap = tt.getBestCmap() or {}
+        except Exception:
+            best_cmap = {}
+        uncovered = [c for c in font.chars_used if ord(c) not in best_cmap]
+        if uncovered:
+            logger.warning(
+                "font %s: cmap covers %d/%d used chars (missing e.g. %r) — "
+                "unicode-driven subsetting unsound, keeping original",
+                font.font_name, len(font.chars_used) - len(uncovered),
+                len(font.chars_used), uncovered[:5])
+            return SubsetResult(
+                font_name=font.font_name,
+                original_bytes=original_bytes,
+                subsetted_bytes=original_bytes,
+                subsetted_data_ref=font.data_ref,
+            )
+
         options = subset.Options()
         options.notdef_outline = True  # 保留 .notdef 轮廓，缺字时不至于渲染空白
         # 原地手术主干（2026-07-04 架构决策 A）必需：保持字形 ID 不变。

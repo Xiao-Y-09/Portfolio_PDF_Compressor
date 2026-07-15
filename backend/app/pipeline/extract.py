@@ -140,8 +140,19 @@ def extract_elements(
 # ---------------------------------------------------------------- 字体
 
 def _extract_fonts(doc, ctx: PipelineContext) -> Dict[str, FontUsage]:
-    """收集全文档字体清单并提取字体字节。chars_used 由文字提取阶段累计。"""
-    fonts: Dict[str, FontUsage] = {}
+    """收集全文档字体清单并提取字体字节。chars_used 由文字提取阶段累计。
+
+    key 语义修订（2026-07-15 字体消失 bug 修复）：按**完整 basefont**（含
+    ABCDEF+ 子集前缀）建条目，不再剥前缀归并——同族的不同子集字体 GID 布局
+    互不兼容，归并会导致 Phase 10 用 A 的字节替换 B 的 FontFile2（文字隐形）。
+
+    Type0（CID 寻址）字体不给 data_ref：其内容流按 GID 直接寻址、内嵌子集
+    常无 cmap 表，Unicode 闭包子集化不可靠（实测 fontTools 只保 .notdef，
+    整字体文字消失）。data_ref=None 复用既有语义：Phase 7 跳过、Phase 10
+    不替换、输出保留原字体。
+    """
+    subtypes: Dict[str, set] = {}
+    first_xref: Dict[str, int] = {}
     for page_index in range(doc.page_count):
         try:
             font_list = doc[page_index].get_fonts(full=True)
@@ -149,23 +160,30 @@ def _extract_fonts(doc, ctx: PipelineContext) -> Dict[str, FontUsage]:
             logger.warning("get_fonts failed on page %d", page_index + 1, exc_info=True)
             continue
         for entry in font_list:
-            xref, _ext, _ftype, basefont = entry[0], entry[1], entry[2], entry[3]
-            key = _font_key(basefont)
-            if key in fonts:
-                continue
-            data_ref: Optional[str] = None
+            xref, _ext, ftype, basefont = entry[0], entry[1], entry[2], entry[3]
+            name = (basefont or "").strip() or "unknown"
+            subtypes.setdefault(name, set()).add(ftype)
+            first_xref.setdefault(name, xref)
+
+    fonts: Dict[str, FontUsage] = {}
+    for name, xref in first_xref.items():
+        data_ref: Optional[str] = None
+        if "Type0" in subtypes[name]:
+            logger.info("font %s: CID-addressed (Type0), skip bytes "
+                        "(unicode-driven subsetting unsound, keep original)", name)
+        else:
             try:
                 _name, ext, _stype, buffer = doc.extract_font(xref)
                 if buffer:
                     ext = ext if _SAFE_EXT.match(ext or "") else "ttf"
-                    ref = f"{FONTS_DIR}/font_{_safe_filename(key)}.{ext}"
+                    ref = f"{FONTS_DIR}/font_{_safe_filename(name)}.{ext}"
                     ctx.resolve_ref(ref).write_bytes(buffer)
                     data_ref = ref
                 else:
-                    logger.warning("font %s: not embedded, skip bytes", key)
+                    logger.warning("font %s: not embedded, skip bytes", name)
             except Exception:
-                logger.warning("font %s: extraction failed", key, exc_info=True)
-            fonts[key] = FontUsage(font_name=key, data_ref=data_ref, chars_used=set())
+                logger.warning("font %s: extraction failed", name, exc_info=True)
+        fonts[name] = FontUsage(font_name=name, data_ref=data_ref, chars_used=set())
     return fonts
 
 
@@ -415,9 +433,14 @@ def _extract_text(page, fonts_used: Dict[str, FontUsage]) -> List[TextBlock]:
                 if not content.strip():
                     continue
                 key = _font_key(span.get("font"))
-                # 跨页累计字符集；span 字体不在字体清单时补一个 data_ref=None 条目
-                usage = fonts_used.setdefault(key, FontUsage(font_name=key))
-                usage.chars_used.update(content)
+                # span 只报剥前缀的族名 → 字符集记到该族**全部**变体上（保守超集，
+                # 子集化多保字形无害）；族无任何变体时补一个 data_ref=None 条目
+                variants = [u for u in fonts_used.values()
+                            if _font_key(u.font_name) == key]
+                if not variants:
+                    variants = [fonts_used.setdefault(key, FontUsage(font_name=key))]
+                for usage in variants:
+                    usage.chars_used.update(content)
                 blocks.append(TextBlock(
                     content=content,
                     font_ref=key,

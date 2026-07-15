@@ -17,7 +17,7 @@ class FontUsage(BaseModel):
     """全 PDF 级字体使用表条目（跨页累计字符集）。"""
 
     font_name: str
-    data_ref: Optional[str] = None  # fonts/font_{name}.ttf；提取失败为 None（Phase 7 跳过子集化）
+    data_ref: Optional[str] = None  # fonts/font_{name}.ttf；提取失败/非嵌入/CID 寻址（Type0）为 None（Phase 7 跳过子集化）
     chars_used: Set[str] = Field(default_factory=set)
 
     @field_serializer("chars_used")

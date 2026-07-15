@@ -379,3 +379,38 @@ Playwright 前端 e2e 2/2；容器化端到端 1/1。
 **关键架构资产（接手者阅读顺序）**：CLAUDE.md（铁律）→ 本文件 →
 docs/ 三份真源 → 手册"实施期架构演进"章节（四条演进：Tier 系统 /
 边界真实判定+估算三段修复 / 原地手术 / Celery FAILURE 序列化）。
+（注：《PDF压缩SaaS构建手册.md》2026-07-15 经用户确认移除，演进记录
+自此追加于本文件。）
+
+## 14. 🐛 上线后 bug 修复：字体子集化致文字消失（2026-07-15）
+
+**症状**：部分 PDF 压缩后特定字体的文字不可见。
+
+**两轮误诊（均已推翻）**：`9cbff84` 给 api 镜像装系统字体包（无效）；
+后续会话把字体包挪到 worker 镜像（未提交即被本次实证推翻）。
+**实证**：pymupdf 静态编译 MuPDF（内置 base14 + CJK 回退），渲染从不查询
+fontconfig/系统字体——无字体容器 vs 装满字体的 Windows 本机，非内嵌字体
+探针 PDF 渲染逐像素一致。Dockerfile 字体包已全部移除。
+
+**真因（字体子集化→原地替换链路，三处叠加）**：
+1. `extract._font_key` 剥子集前缀归并同族字体（ABCDEF+X 与 GHIJKL+X 同 key）
+   → 只保存首见变体的字节，Phase 10 却按剥前缀名把这份字节替换进**所有**
+   同族字体的 FontFile2——不同子集 GID 布局互不兼容 → 文字隐形/乱码。
+2. Type0（CID 寻址）字体按 Unicode 文本经 cmap 求字形闭包不可靠（内嵌子集
+   常无 cmap）：实测 fontTools 只保 .notdef（"Retaining 1 glyphs"），
+   portfolio_1 的 MicrosoftYaHei 仅因 fontTools 后处理 KeyError 崩溃才侥幸
+   保住原件——不崩的场合即"整字体文字消失"。
+3. retain_gids 对闭包未命中的字形**清空轮廓**（非回退 .notdef），cmap 覆盖
+   不全时对应字符直接隐形。
+
+**修复**（extract.py / preprocess.py / assemble.py，契约零改动）：
+- extract：字体表按**完整 basefont** 建键；Type0 字体不给 data_ref（复用
+  "跳过子集化"语义）；span 字符集记到族内全部变体（保守超集）。
+- preprocess：cmap 覆盖门禁——已用字符未被 cmap 全覆盖 → 保原件。
+- assemble：完整名精确匹配 + Type0 xref 拒绝替换 + 替换前 numGlyphs
+  一致性校验（最后防线）。
+- 测试：portfolio_2 子集化锚点 24→12 个（Type0 出局）修订；新增 cmap
+  门禁单测。全量 222 passed。体积代价 KB 级（Type0 多为已子集字体）。
+
+**遗留优化（并入上线后清单）**：GID 级子集化（pymupdf `get_texttrace` 可取
+真实 glyph id）可安全恢复 Type0 字体的子集化收益——需要时再做。
