@@ -23,7 +23,7 @@ export default function ProgressView({ meta }: { meta: ProgressMeta }) {
   return (
     <div data-testid="progress-view" className="mx-auto max-w-xl space-y-4 py-16">
       <div className="flex items-baseline justify-between">
-        <span className="font-medium">{label}</span>
+        <span className="text-ui">{label}</span>
         <span className="text-sm tabular-nums text-zinc-500">{percent}%</span>
       </div>
       <div className="h-2.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">

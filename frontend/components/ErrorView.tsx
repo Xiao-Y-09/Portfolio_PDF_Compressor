@@ -58,7 +58,7 @@ export default function ErrorView({ error }: { error: UiError }) {
   return (
     <div data-testid="failure-view" className="mx-auto max-w-xl py-12">
       <div className="rounded-xl border border-red-200 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
-        <h2 className="font-semibold text-red-800 dark:text-red-300">
+        <h2 className="text-h3 text-red-800 dark:text-red-300">
           {headline}
         </h2>
         {phase &&
@@ -70,7 +70,7 @@ export default function ErrorView({ error }: { error: UiError }) {
                 <Link
                   data-testid="retry-larger-target"
                   href="/"
-                  className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg hover:bg-accent-hover"
+                  className="rounded-lg bg-accent px-4 py-2 text-ui text-accent-fg hover:bg-accent-hover"
                 >
                   Retry with a larger target
                 </Link>
@@ -81,7 +81,7 @@ export default function ErrorView({ error }: { error: UiError }) {
           !["CONVERGENCE_FAILED", "TARGET_TOO_SMALL"].includes(phase.code)) && (
           <Link
             href="/"
-            className="mt-4 inline-block rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg hover:bg-accent-hover"
+            className="mt-4 inline-block rounded-lg bg-accent px-4 py-2 text-ui text-accent-fg hover:bg-accent-hover"
           >
             Back to upload
           </Link>
