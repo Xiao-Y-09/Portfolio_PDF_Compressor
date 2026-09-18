@@ -45,7 +45,7 @@ export default function ResultView({
     <div data-testid="success-view" className="mx-auto max-w-xl space-y-6 py-12">
       <div className="rounded-xl border border-zinc-200 bg-white p-8 text-center dark:border-zinc-800 dark:bg-zinc-900">
         <p className="text-sm text-zinc-500">Compression complete · {note.label}</p>
-        <p className="mt-3 text-4xl font-semibold tabular-nums">
+        <p className="mt-3 text-4xl font-bold tracking-[-0.01em] text-heading tabular-nums">
           {meta.final_size_mb.toFixed(2)} MB
         </p>
         {ratio !== null && (
@@ -56,7 +56,7 @@ export default function ResultView({
         <a
           data-testid="download-button"
           href={downloadUrl(meta.download_id)}
-          className="mt-6 inline-block rounded-lg bg-accent px-8 py-3 font-medium text-accent-fg transition hover:bg-accent-hover"
+          className="mt-6 inline-block rounded-lg bg-accent px-8 py-3 text-ui text-accent-fg transition hover:bg-accent-hover"
         >
           Download PDF
         </a>

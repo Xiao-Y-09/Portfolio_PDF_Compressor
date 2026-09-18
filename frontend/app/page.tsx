@@ -10,6 +10,7 @@ import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useDropzone } from "react-dropzone";
 
+import AxonBackground from "@/components/AxonBackground";
 import { normalizeError, startCompression, uploadPdf } from "@/lib/api";
 import { presetForTarget, useCompressorStore } from "@/lib/store";
 import type { CompressionTarget, UiError } from "@/lib/types";
@@ -88,123 +89,127 @@ export default function HomePage() {
   });
 
   return (
-    <div className="space-y-10">
-      <section className="space-y-2">
-        <h2 className="text-3xl font-semibold tracking-tight">
-          Compress your portfolio
-        </h2>
-        <p className="max-w-2xl text-zinc-500 dark:text-zinc-400">
-          Pick a target size and scenario, then drop in a PDF. Text, vectors,
-          bookmarks, and hyperlinks are kept structurally intact.
-        </p>
-      </section>
+    <>
+      {/* Full-viewport line drawing, position: fixed — only the content scrolls over it. */}
+      <AxonBackground />
+      <div className="relative z-[1] space-y-10">
+        <section className="space-y-2">
+          <h2 className="text-h1">
+            Compress your portfolio
+          </h2>
+          <p className="dark:text-zinc-400">
+            Pick a target size and scenario, then drop in a PDF. Text, vectors,
+            bookmarks, and hyperlinks are kept structurally intact.
+          </p>
+        </section>
 
-      {/* Target size */}
-      <section>
-        <h3 className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-500">
-          Target size
-        </h3>
-        <div className="flex flex-wrap gap-3">
-          {TARGETS.map((mb) => (
-            <button
-              key={mb}
-              data-testid={`target-${mb}`}
-              onClick={() => store.setTarget(mb, presetForTarget(mb))}
-              className={`rounded-lg border px-5 py-2.5 text-sm font-medium transition
-                ${
-                  store.targetSizeMb === mb
-                    ? "border-accent bg-accent text-accent-fg"
-                    : "border-zinc-300 hover:border-accent dark:border-zinc-700"
-                }`}
-            >
-              {mb} MB
-            </button>
-          ))}
-        </div>
-      </section>
+        {/* Target size */}
+        <section>
+          <h3 className="mb-3 text-label uppercase text-zinc-500">
+            Target size
+          </h3>
+          <div className="flex flex-wrap gap-3">
+            {TARGETS.map((mb) => (
+              <button
+                key={mb}
+                data-testid={`target-${mb}`}
+                onClick={() => store.setTarget(mb, presetForTarget(mb))}
+                className={`rounded-lg border px-5 py-2.5 text-ui transition
+                  ${
+                    store.targetSizeMb === mb
+                      ? "border-accent bg-accent text-accent-fg"
+                      : "border-zinc-300 bg-white/80 hover:border-accent dark:border-zinc-700 dark:bg-transparent"
+                  }`}
+              >
+                {mb} MB
+              </button>
+            ))}
+          </div>
+        </section>
 
-      {/* Compression scenario */}
-      <section>
-        <h3 className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-500">
-          Scenario
-        </h3>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {SCENARIOS.map((s) => (
-            <button
-              key={s.value}
-              data-testid={`scenario-${s.value}`}
-              onClick={() => store.setTarget(store.targetSizeMb, s.value)}
-              className={`rounded-lg border p-4 text-left transition
-                ${
-                  store.compressionTarget === s.value
-                    ? "border-accent ring-1 ring-accent"
-                    : "border-zinc-300 hover:border-accent dark:border-zinc-700"
-                }`}
-            >
-              <div className="font-medium">{s.label}</div>
-              <div className="mt-1 text-xs text-zinc-500">{s.hint}</div>
-            </button>
-          ))}
-        </div>
-      </section>
+        {/* Compression scenario */}
+        <section>
+          <h3 className="mb-3 text-label uppercase text-zinc-500">
+            Scenario
+          </h3>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {SCENARIOS.map((s) => (
+              <button
+                key={s.value}
+                data-testid={`scenario-${s.value}`}
+                onClick={() => store.setTarget(store.targetSizeMb, s.value)}
+                className={`rounded-lg border bg-white/80 p-4 text-left transition dark:bg-transparent
+                  ${
+                    store.compressionTarget === s.value
+                      ? "border-accent ring-1 ring-accent"
+                      : "border-zinc-300 hover:border-accent dark:border-zinc-700"
+                  }`}
+              >
+                <div className="text-ui">{s.label}</div>
+                <div className="mt-1 text-xs text-zinc-500">{s.hint}</div>
+              </button>
+            ))}
+          </div>
+        </section>
 
-      {/* Upload zone */}
-      <section
-        {...getRootProps()}
-        data-testid="dropzone"
-        className={`flex min-h-52 cursor-pointer flex-col items-center justify-center
-          rounded-xl border-2 border-dashed p-8 text-center transition
-          ${
-            isDragActive
-              ? "border-accent bg-zinc-50 dark:bg-zinc-900"
-              : "border-zinc-300 hover:border-accent dark:border-zinc-700"
-          }`}
-      >
-        <input {...getInputProps()} data-testid="file-input" />
-        {busy ? (
-          <p className="animate-pulse font-medium text-accent">{busy}</p>
-        ) : (
-          <>
-            <p className="font-medium">Drop a PDF here, or click to choose a file</p>
-            <p className="mt-2 text-sm text-zinc-500">Up to 500 MB</p>
-          </>
-        )}
-      </section>
-
-      {error && (
-        <div
-          data-testid="home-error"
-          className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300"
+        {/* Upload zone */}
+        <section
+          {...getRootProps()}
+          data-testid="dropzone"
+          className={`flex min-h-52 cursor-pointer flex-col items-center justify-center
+            rounded-xl border-2 border-dashed p-8 text-center transition
+            ${
+              isDragActive
+                ? "border-accent bg-zinc-50 dark:bg-zinc-900"
+                : "border-zinc-300 bg-white/80 hover:border-accent dark:border-zinc-700 dark:bg-transparent"
+            }`}
         >
-          {error.message}
-        </div>
-      )}
+          <input {...getInputProps()} data-testid="file-input" />
+          {busy ? (
+            <p className="animate-pulse text-ui text-accent">{busy}</p>
+          ) : (
+            <>
+              <p className="text-ui">Drop a PDF here, or click to choose a file</p>
+              <p className="mt-2 text-sm text-zinc-500">Up to 500 MB</p>
+            </>
+          )}
+        </section>
 
-      {/* How compression works */}
-      <section className="border-t border-zinc-200 pt-10 dark:border-zinc-800">
-        <h3 className="text-xl font-semibold tracking-tight">
-          How the compression works
-        </h3>
-        <p className="mt-1 max-w-2xl text-sm text-zinc-500">
-          Six steps from your raw portfolio to a file that hits your target —
-          without throwing away the things that make a portfolio readable.
-        </p>
-        <ol className="mt-6 grid grid-cols-1 gap-x-8 gap-y-6 sm:grid-cols-2">
-          {STEPS.map((step, i) => (
-            <li key={step.title} className="flex gap-4">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-300 text-sm font-semibold tabular-nums dark:border-zinc-700">
-                {i + 1}
-              </span>
-              <div className="space-y-1">
-                <div className="font-medium">{step.title}</div>
-                <p className="text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
-                  {step.body}
-                </p>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </section>
-    </div>
+        {error && (
+          <div
+            data-testid="home-error"
+            className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300"
+          >
+            {error.message}
+          </div>
+        )}
+
+        {/* How compression works */}
+        <section className="border-t border-zinc-200 pt-10 dark:border-zinc-800">
+          <h3 className="text-h2">
+            How the compression works
+          </h3>
+          <p className="mt-1">
+            Six steps from your raw portfolio to a file that hits your target —
+            without throwing away the things that make a portfolio readable.
+          </p>
+          <ol className="mt-6 grid grid-cols-1 gap-x-8 gap-y-6 sm:grid-cols-2">
+            {STEPS.map((step, i) => (
+              <li key={step.title} className="flex gap-4">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-300 text-sm font-semibold tabular-nums dark:border-zinc-700">
+                  {i + 1}
+                </span>
+                <div className="space-y-1">
+                  <div className="text-h3 text-heading">{step.title}</div>
+                  <p className="dark:text-zinc-400">
+                    {step.body}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
+      </div>
+    </>
   );
 }

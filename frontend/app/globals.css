@@ -8,6 +8,9 @@
   --accent: #111111;
   --accent-hover: #000000;
   --accent-fg: #ffffff;
+  /* Text colors (tailwind `text-heading` / `text-copy`): near-black headings, gray body. */
+  --fg-heading: #222222;
+  --fg-copy: #5a5a5a;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -15,9 +18,74 @@
     --accent: #fafafa;
     --accent-hover: #ffffff;
     --accent-fg: #111111;
+    /* Dark theme keeps its existing zinc-100 text. */
+    --fg-heading: #f4f4f5;
+    --fg-copy: #f4f4f5;
   }
 }
 
+/* Typography: a single family (Nunito Sans, loaded by next/font in app/layout.tsx and
+   wired to `font-sans` in tailwind.config.ts); hierarchy comes from weight and size only.
+   Role sizes are the text-h1 / h2 / h3 / label / ui / body tokens in tailwind.config.ts. */
 body {
-  @apply bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100;
+  @apply bg-white text-body text-copy dark:bg-zinc-950;
+}
+
+@layer base {
+  h1, h2, h3, h4 {
+    color: var(--fg-heading);
+  }
+  p {
+    max-width: 680px;
+  }
+  p + p {
+    margin-top: 1.2em;
+  }
+  b, strong {
+    font-weight: 700;
+  }
+}
+
+/* Home page background (components/AxonBackground.tsx, from the axon-bg asset).
+   Fixed to the viewport so it fills the screen and only the content scrolls over it;
+   both layers (static ground grid, blocks) are pinned to the top-right corner. Each
+   block is its own element so its float and pointer bump stay on the compositor.
+   Plain CSS outside any @layer so Tailwind never purges it; the short .c0–.c8 /
+   .floatA names are scoped under .axon-bg so they can't collide with anything else. */
+.axon-bg{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;overflow:hidden}
+/* Whole-background fade, so the field stays quiet behind the content. */
+.axon-bg{opacity:.55}
+.axon-bg .axon-ground,.axon-bg .axon-blocks{position:absolute;top:0;right:0}
+.axon-bg .axon-block{position:absolute}
+.axon-bg .axon-block svg{display:block}
+@keyframes drawIn{from{stroke-dashoffset:1200}to{stroke-dashoffset:0}}
+/* Bob around the grid position; --amp (per block, ~6px) and the phase are set inline. */
+@keyframes floatA{0%,100%{transform:translateY(calc(-1 * var(--amp)))}50%{transform:translateY(var(--amp))}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.axon-bg .floatA{animation:floatA 11s ease-in-out infinite}
+/* Translucent block faces fade in alongside their edges; per-band delay is set inline. */
+.axon-bg .axon-faces{opacity:0;animation:fadeIn 3.5s ease-out forwards}
+.axon-bg .c0{stroke-dasharray:1200;stroke-dashoffset:1200;animation:drawIn 3.5s ease-out 0.00s forwards}
+.axon-bg .c1{stroke-dasharray:1200;stroke-dashoffset:1200;animation:drawIn 3.5s ease-out 0.35s forwards}
+.axon-bg .c2{stroke-dasharray:1200;stroke-dashoffset:1200;animation:drawIn 3.5s ease-out 0.70s forwards}
+.axon-bg .c3{stroke-dasharray:1200;stroke-dashoffset:1200;animation:drawIn 3.5s ease-out 1.05s forwards}
+.axon-bg .c4{stroke-dasharray:1200;stroke-dashoffset:1200;animation:drawIn 3.5s ease-out 1.40s forwards}
+.axon-bg .c5{stroke-dasharray:1200;stroke-dashoffset:1200;animation:drawIn 3.5s ease-out 1.75s forwards}
+.axon-bg .c6{stroke-dasharray:1200;stroke-dashoffset:1200;animation:drawIn 3.5s ease-out 2.10s forwards}
+.axon-bg .c7{stroke-dasharray:1200;stroke-dashoffset:1200;animation:drawIn 3.5s ease-out 2.45s forwards}
+.axon-bg .c8{stroke-dasharray:1200;stroke-dashoffset:1200;animation:drawIn 3.5s ease-out 2.80s forwards}
+
+/* Below Tailwind's `md` breakpoint the form stacks into one narrow column with the
+   field packed behind all of it, so the background is hidden on phones. */
+@media (max-width: 767px){ .axon-bg{display:none} }
+
+/* The colors are tuned for a light page, so the background is hidden on the dark theme. */
+@media (prefers-color-scheme: dark){ .axon-bg{display:none} }
+
+@media (prefers-reduced-motion: reduce){
+  *{animation:none !important}
+  /* With the draw-in disabled, show the finished drawing instead of blank paths. */
+  .axon-bg .c0,.axon-bg .c1,.axon-bg .c2,.axon-bg .c3,.axon-bg .c4,
+  .axon-bg .c5,.axon-bg .c6,.axon-bg .c7,.axon-bg .c8{stroke-dashoffset:0}
+  .axon-bg .axon-faces{opacity:1}
 }

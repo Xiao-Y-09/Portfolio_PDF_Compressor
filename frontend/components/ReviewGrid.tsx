@@ -43,17 +43,17 @@ export default function ReviewGrid({
   return (
     <div data-testid="review-view" className="space-y-6">
       <section className="space-y-1">
-        <h2 className="text-xl font-semibold tracking-tight">
+        <h2 className="text-h2">
           Confirm page classification
         </h2>
-        <p className="text-sm text-zinc-500">
+        <p>
           Classification determines each page&apos;s compression strategy.
           {needConfirm > 0 && (
-            <span className="font-medium text-accent">
+            <strong>
               {" "}
               {needConfirm} page{needConfirm > 1 ? "s are" : " is"} uncertain —
               please review {needConfirm > 1 ? "them" : "it"}.
-            </span>
+            </strong>
           )}
         </p>
         <p className="text-xs text-zinc-500">
@@ -170,7 +170,7 @@ export default function ReviewGrid({
           data-testid="resume-button"
           onClick={onResume}
           disabled={resuming}
-          className="rounded-lg bg-accent px-8 py-3 font-medium text-accent-fg transition hover:bg-accent-hover disabled:opacity-50"
+          className="rounded-lg bg-accent px-8 py-3 text-ui text-accent-fg transition hover:bg-accent-hover disabled:opacity-50"
         >
           {resuming ? "Starting…" : "Confirm & continue"}
         </button>
